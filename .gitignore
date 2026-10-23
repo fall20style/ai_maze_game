@@ -1,0 +1,36 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---- Node / Web ----
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# ---- 학습 산출물 (용량 큼, 재생성 가능) ----
+*.pt
+*.pth
+*.safetensors
+*.npz
+*.parquet
+data/
+datasets/
+checkpoints/
+runs/
+eval_failures/
+
+# ---- Editor / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
