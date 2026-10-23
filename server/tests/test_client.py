@@ -147,6 +147,9 @@ def test_no_movement_when_the_server_does_not_answer():
     assert session.env.position == (1, 1)
     assert session.env.step_count == 0
     assert session.env.trajectory == [(1, 1)]
+    # 실패 직후에는 재요청하지 않는다 (요청 폭주 방지)
+    assert session.wants_step(now=1.01) is False
+    assert session.wants_step(now=2.0) is True
 
 
 def test_error_clears_after_the_server_recovers():

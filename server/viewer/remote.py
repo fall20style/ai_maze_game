@@ -211,8 +211,10 @@ class RemoteSession:
 
     def advance(self, now: float) -> bool:
         ok = self._call(self.api.advance, now, self.game_id)
-        if ok:
-            self.note_step(now)
+        self.note_step(now)
+        if not ok:
+            # 서버가 죽었을 때 매 프레임 요청을 쏘지 않는다 (백오프)
+            self._next_at = now + max(0.5, self.step_interval)
         return ok
 
     def send_action(self, action: int, now: float) -> bool:
