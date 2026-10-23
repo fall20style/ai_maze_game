@@ -62,11 +62,13 @@ def rollout(
     seq_len: int,
     max_steps: int | None = None,
     global_size: int = 5,
+    map_size: int = 0,
 ) -> dict:
     env = MazeEnv(
         maze,
         window_size=window_size,
         global_size=global_size,
+        map_size=map_size,
         max_steps=max_steps or default_max_steps(maze.width, maze.height),
     )
     runner = PolicyRunner(model, seq_len=seq_len)
@@ -120,6 +122,7 @@ def evaluate(
     meta = load_meta(data_path)
     window_size = int(meta.get("config", {}).get("window_size", 3))
     global_size = int(meta.get("config", {}).get("global_size", 5))
+    map_size = int(meta.get("config", {}).get("map_size", 0))
     randomize = bool(meta.get("config", {}).get("randomize_endpoints", True))
 
     model = BertPolicy.load(checkpoint)
@@ -138,7 +141,16 @@ def evaluate(
             algorithm="dfs" if algo == 0 else "prim",
             randomize_endpoints=randomize,
         )
-        results.append(rollout(model, maze, window_size, seq_len, global_size=global_size))
+        results.append(
+            rollout(
+                model,
+                maze,
+                window_size,
+                seq_len,
+                global_size=global_size,
+                map_size=map_size,
+            )
+        )
 
     by_size: dict[int, list[dict]] = defaultdict(list)
     for r in results:

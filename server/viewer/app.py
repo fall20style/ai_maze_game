@@ -105,6 +105,7 @@ class Session:
             self.maze,
             window_size=self.brain.window_size,
             global_size=self.brain.global_size,
+            map_size=self.brain.map_size,
             max_steps=self.max_steps,
         )
         self.floor_total = max(1, int((self.maze.grid == FLOOR).sum()))

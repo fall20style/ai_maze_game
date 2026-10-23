@@ -10,6 +10,7 @@ from app.game.env import (
     observation_dim,
     pack_payload,
 )
+from app.game.expert import frontier_action
 from app.game.maze import generate
 from app.game.solver import bfs_path, path_actions
 
@@ -216,3 +217,94 @@ def test_pack_payload_requires_global_when_enabled(env):
 def test_global_size_validation(maze):
     with pytest.raises(ValueError):
         MazeEnv(maze, global_size=4)
+
+
+# ------------------------------------------------------------- 지식 지도 (map_size)
+def _known_env(maze, map_size: int = 15):
+    env = MazeEnv(
+        maze, window_size=3, global_size=0, map_size=map_size, max_steps=512
+    )
+    env.reset()
+    return env
+
+
+def test_map_size_adds_two_channels_to_observation_dim():
+    assert observation_dim(3, 5, 0) == 54
+    assert observation_dim(3, 0, 15) == 11 + 18 + 2 * 225
+    assert observation_dim(3, 5, 9) == 54 + 2 * 81
+
+
+def test_known_map_starts_with_the_start_window(maze):
+    env = _known_env(maze)
+    wall, floor = env._known_channels()
+    assert wall.shape == floor.shape == (15, 15)
+    assert floor[maze.start[1], maze.start[0]] == 1.0
+    assert wall.sum() > 0, "주변 벽을 하나도 못 봤다"
+    # 시작 칸 주변 3x3 만 알고 있어야 한다
+    assert int(wall.sum() + floor.sum()) == 9
+
+
+def test_known_map_matches_true_maze_on_seen_cells(maze):
+    env = _known_env(maze)
+    for _ in range(20):
+        if env.done:
+            break
+        env.step(frontier_action(env.known, env.position, maze.goal))
+
+    wall, floor = env._known_channels()
+    seen_wall = wall.astype(bool)
+    seen_floor = floor.astype(bool)
+    assert not (seen_wall & seen_floor).any()
+    for y in range(maze.height):
+        for x in range(maze.width):
+            if seen_wall[y, x]:
+                assert maze.is_wall(x, y), f"({x},{y}) 는 벽이 아니다"
+            if seen_floor[y, x]:
+                assert not maze.is_wall(x, y), f"({x},{y}) 는 바닥이 아니다"
+
+
+def test_known_map_never_shrinks(maze):
+    env = _known_env(maze)
+    previous = 0
+    for _ in range(15):
+        if env.done:
+            break
+        env.step(frontier_action(env.known, env.position, maze.goal))
+        wall, floor = env._known_channels()
+        known = int(wall.sum() + floor.sum())
+        assert known >= previous
+        previous = known
+
+
+def test_known_map_is_not_the_full_maze(maze):
+    """지식 지도는 정답이 아니라 누적 관측이어야 한다 (미로를 통째로 주면 안 됨)."""
+    env = _known_env(maze)
+    wall, floor = env._known_channels()
+    assert int(wall.sum() + floor.sum()) < maze.width * maze.height
+
+
+def test_pack_payload_roundtrip_with_map(maze):
+    env = _known_env(maze)
+    env.step(frontier_action(env.known, env.position, maze.goal))
+    payload = env.observe_payload()
+    packed = pack_payload(payload, 3, 0, 15)
+    assert np.array_equal(packed, env.observe())
+
+
+def test_pack_payload_requires_known_map_when_enabled(maze):
+    env = _known_env(maze)
+    payload = env.observe_payload()
+    del payload["known_wall"]
+    with pytest.raises(ValueError):
+        pack_payload(payload, 3, 0, 15)
+
+
+def test_map_size_must_cover_the_maze():
+    maze = generate(15, 15, seed=1)
+    with pytest.raises(ValueError):
+        MazeEnv(maze, map_size=9)
+
+
+def test_map_size_validation(maze):
+    with pytest.raises(ValueError):
+        MazeEnv(maze, map_size=4)

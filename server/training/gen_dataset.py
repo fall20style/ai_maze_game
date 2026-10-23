@@ -43,7 +43,7 @@ import numpy as np
 
 from app.game.actions import DELTAS, Action
 from app.game.env import MazeEnv
-from app.game.expert import wall_follow_action
+from app.game.expert import frontier_action, wall_follow_action
 from app.game.maze import generate
 
 DEFAULT_SIZES: tuple[int, ...] = (9, 11, 13, 15, 17, 19, 21)
@@ -56,6 +56,10 @@ class DatasetConfig:
     sizes: tuple[int, ...] = DEFAULT_SIZES
     window_size: int = 3
     global_size: int = 5
+    #: 지식 지도(누적 관측) 크기. 0 = 비활성
+    map_size: int = 0
+    #: 라벨을 만드는 전문가: ``wall`` (왼손 법칙) 또는 ``frontier`` (지식 지도 탐색)
+    expert: str = "wall"
     base_seed: int = 0
     #: 노이즈 없는 전문가 궤적 수
     expert_episodes: int = 1
@@ -126,13 +130,17 @@ def _rollout(
         maze,
         window_size=cfg.window_size,
         global_size=cfg.global_size,
+        map_size=cfg.map_size,
         max_steps=cfg.max_episode_steps,
     )
     obs = env.reset()
     t = 0
 
     while not env.done:
-        label = wall_follow_action(maze, env.position, env.last_action)
+        if cfg.expert == "frontier":
+            label = frontier_action(env.known, env.position, maze.goal)
+        else:
+            label = wall_follow_action(maze, env.position, env.last_action)
         obs_list.append(obs)
         action_list.append(int(label))
         kinds.append(kind)
@@ -276,6 +284,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="전역 방문 요약 격자 크기 (0 = 비활성)",
     )
     p.add_argument("--base-seed", type=int, default=0)
+    p.add_argument(
+        "--map-size",
+        type=int,
+        default=0,
+        choices=(0, 9, 11, 13, 15, 17, 19, 21),
+        help="지식 지도(누적 관측) 크기 (0 = 비활성, 미로 크기와 같게)",
+    )
+    p.add_argument(
+        "--expert",
+        choices=("wall", "frontier"),
+        default="wall",
+        help="라벨을 만드는 전문가: wall(왼손 법칙) | frontier(지식 지도 탐색)",
+    )
     p.add_argument("--expert-episodes", type=int, default=1)
     p.add_argument("--noisy-episodes", type=int, default=1)
     p.add_argument(
@@ -304,6 +325,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         sizes=sizes,
         window_size=args.window_size,
         global_size=args.global_size,
+        map_size=args.map_size,
+        expert=args.expert,
         base_seed=args.base_seed,
         expert_episodes=args.expert_episodes,
         noisy_episodes=args.noisy_episodes,

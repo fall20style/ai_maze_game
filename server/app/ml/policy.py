@@ -41,6 +41,8 @@ class PolicyConfig:
     #: (뷰어/서버가 같은 ``MazeEnv`` 설정으로 관측을 만들기 위해 필요)
     window_size: int = 3
     global_size: int = 5
+    #: 지식 지도(누적 관측) 크기. 0 = 비활성
+    map_size: int = 0
     hidden_size: int = 128
     num_hidden_layers: int = 2
     num_attention_heads: int = 2

@@ -1,26 +1,27 @@
-"""DAgger — 모델이 실제로 방문한 상태에 정답 라벨을 붙여 재학습한다.
+"""DAgger — 모델이 실제로 방문한 상태에 전문가 라벨을 붙여 재학습한다.
 
 문제
 ----
 순수 행동 복제(BC)는 **모델이 한 번도 실수하지 않은 상태**만 학습한다.
 추론에서는 모델이 스스로 실수하며 학습 분포 밖으로 나가고, 그 상태에서의 복구
-행동을 배운 적이 없으므로 그대로 헤맨다.
-
-실측: 5 epoch 학습 후 단일 스텝 정확도 76% 인데 롤아웃 성공률은 27%,
-루프율 75%. 전형적인 compounding error.
+행동을 배운 적이 없으므로 그대로 헤맨다 (compounding error).
 
 해법
 ----
 1. 현재 정책으로 미로를 주행한다 (모델이 실제로 가는 상태를 모은다).
-2. 각 상태에 **BFS 최적 행동**을 라벨로 붙인다 (전문가 라벨).
+2. 각 상태에 **관측으로 계산 가능한 전문가 행동**을 라벨로 붙인다.
 3. 원본 데이터에 합쳐 재학습한다.
 
-이렇게 하면 모델이 빠지는 진동 상태가 학습 데이터에 직접 등장한다.
+라벨은 ``meta.json`` 의 ``expert`` 를 따른다.
+
+- ``wall``     : 왼손 법칙 (3×3 창 + 직전 행동)
+- ``frontier`` : 지식 지도 기반 탐색 (관측된 벽/바닥 + 방문 기록)
+- ``bfs``      : 전체 미로를 아는 최단 행동 (구 데이터 전용, 학습 불가능)
 
 사용
 ----
-    python -m training.dagger --checkpoint checkpoints/v3/best.pt --data data/v3 \
-        --out data/v3_dagger --limit 200
+    python -m training.dagger --checkpoint checkpoints/frontier/best.pt \
+        --data data/frontier --out data/frontier_dagger --limit 200
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ import numpy as np
 
 from app.game.actions import Action
 from app.game.env import MazeEnv, default_max_steps, observation_dim
+from app.game.expert import frontier_action, wall_follow_action
 from app.game.maze import generate
 from app.game.solver import best_action, distance_map
 from app.ml.policy import BertPolicy
@@ -50,11 +52,13 @@ def collect(
     deterministic: bool = True,
     temperature: float = 1.0,
 ) -> dict[str, np.ndarray]:
-    """정책 롤아웃을 돌며 (관측, 최적 행동) 쌍을 모은다."""
+    """정책 롤아웃을 돌며 (관측, 전문가 행동) 쌍을 모은다."""
     meta = load_meta(Path(data_dir))
     cfg = meta.get("config", {})
     window_size = int(cfg.get("window_size", 3))
     global_size = int(cfg.get("global_size", 5))
+    map_size = int(cfg.get("map_size", 0))
+    expert = str(cfg.get("expert", "bfs"))
     randomize = bool(cfg.get("randomize_endpoints", True))
 
     model = BertPolicy.load(checkpoint)
@@ -70,7 +74,7 @@ def collect(
     size_all: list[int] = []
     step_all: list[int] = []
     algo_all: list[int] = []
-    stats = {"mazes": len(mazes), "samples": 0, "wins": 0, "steps": 0}
+    stats = {"mazes": len(mazes), "samples": 0, "wins": 0, "steps": 0, "expert": expert}
 
     for seed, size, algo in mazes:
         maze = generate(
@@ -80,11 +84,12 @@ def collect(
             algorithm="dfs" if algo == 0 else "prim",
             randomize_endpoints=randomize,
         )
-        dist = distance_map(maze, maze.goal)
+        dist = distance_map(maze, maze.goal) if expert == "bfs" else None
         env = MazeEnv(
             maze,
             window_size=window_size,
             global_size=global_size,
+            map_size=map_size,
             max_steps=default_max_steps(maze.width, maze.height),
         )
         runner = PolicyRunner(model, seq_len=seq_len)
@@ -92,11 +97,17 @@ def collect(
 
         t = 0
         while not env.done:
-            label = best_action(maze, env.position, dist)
-            if label is None:
-                break
+            if expert == "frontier":
+                label = int(frontier_action(env.known, env.position, maze.goal))
+            elif expert == "wall":
+                label = int(wall_follow_action(maze, env.position, env.last_action))
+            else:
+                label = best_action(maze, env.position, dist)
+                if label is None:
+                    break
+                label = int(label)
             obs_all.append(obs)
-            act_all.append(int(label))
+            act_all.append(label)
             seed_all.append(seed)
             size_all.append(size)
             step_all.append(t)

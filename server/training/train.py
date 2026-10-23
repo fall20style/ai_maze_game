@@ -52,14 +52,18 @@ class TrainConfig:
     init_checkpoint: str | None = None
 
 
-def _load_obs_spec(data_dir: Path) -> tuple[int, int]:
-    """meta.json 에서 (window_size, global_size) 를 읽는다."""
+def _load_obs_spec(data_dir: Path) -> tuple[int, int, int]:
+    """meta.json 에서 (window_size, global_size, map_size) 를 읽는다."""
     meta_path = data_dir / "meta.json"
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         cfg = meta.get("config", {})
-        return int(cfg.get("window_size", 3)), int(cfg.get("global_size", 5))
-    return 3, 5
+        return (
+            int(cfg.get("window_size", 3)),
+            int(cfg.get("global_size", 5)),
+            int(cfg.get("map_size", 0)),
+        )
+    return 3, 5, 0
 
 
 def evaluate_accuracy(model: nn.Module, loader: DataLoader, device: str) -> dict:
@@ -94,8 +98,8 @@ def train(cfg: TrainConfig) -> dict:
     out_dir = Path(cfg.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    window_size, global_size = _load_obs_spec(data_dir)
-    obs_dim = observation_dim(window_size, global_size)
+    window_size, global_size, map_size = _load_obs_spec(data_dir)
+    obs_dim = observation_dim(window_size, global_size, map_size)
 
     train_ds = SequenceDataset(data_dir / "train.npz", seq_len=cfg.seq_len)
     val_ds = SequenceDataset(data_dir / "val.npz", seq_len=cfg.seq_len)
@@ -112,6 +116,7 @@ def train(cfg: TrainConfig) -> dict:
         seq_len=cfg.seq_len,
         window_size=window_size,
         global_size=global_size,
+        map_size=map_size,
         pretrained=cfg.pretrained,
         lora_r=cfg.lora_r,
         lora_alpha=cfg.lora_alpha,

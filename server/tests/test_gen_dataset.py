@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from app.game.actions import DELTAS, LAST_ACTION_DIM, Action
-from app.game.env import observation_dim
-from app.game.expert import wall_follow_action
+from app.game.env import FLOOR_CELL, UNKNOWN, WALL_CELL, observation_dim
+from app.game.expert import frontier_action, wall_follow_action
 from app.game.maze import generate
 from training.gen_dataset import (
     DatasetConfig,
@@ -205,3 +205,98 @@ def test_no_maze_leaks_between_splits(tmp_path):
     assert not (seeds["train"] & seeds["val"])
     assert not (seeds["train"] & seeds["test"])
     assert not (seeds["val"] & seeds["test"])
+
+
+# ------------------------------------------------------- frontier 라벨 (지식 지도)
+def _obs_offsets(cfg: DatasetConfig) -> dict[str, tuple[int, int]]:
+    """관측 벡터의 구간 경계 (MazeEnv.observe 와 같은 순서)."""
+    w = cfg.window_size
+    g = cfg.global_size
+    m = cfg.map_size
+    pos = 0
+    local = pos + 2
+    visited = local + w * w
+    cursor = visited + w * w
+    glob = (cursor, cursor + g * g) if g else (cursor, cursor)
+    cursor += g * g
+    known_wall = (cursor, cursor + m * m)
+    cursor += m * m
+    known_floor = (cursor, cursor + m * m)
+    cursor += m * m
+    goal_rel = (cursor, cursor + 2)
+    cursor += 2
+    return {
+        "pos": (pos, local),
+        "local": (local, visited),
+        "visited": (visited, visited + w * w),
+        "global": glob,
+        "known_wall": known_wall,
+        "known_floor": known_floor,
+        "goal_rel": goal_rel,
+        "dist": (cursor, cursor + 1),
+        "last_action": (cursor + 1, cursor + 1 + LAST_ACTION_DIM),
+    }
+
+
+def _decode_belief(obs: np.ndarray, cfg: DatasetConfig):
+    """관측 → (지식 지도, 위치, 목표). 지식 지도만으로 전문가를 재현할 수 있어야 한다."""
+    off = _obs_offsets(cfg)
+    m = cfg.map_size
+    wall = obs[slice(*off["known_wall"])].reshape(m, m) > 0.5
+    floor = obs[slice(*off["known_floor"])].reshape(m, m) > 0.5
+    known = np.full((m, m), UNKNOWN, dtype=np.uint8)
+    known[wall] = WALL_CELL
+    known[floor] = FLOOR_CELL
+
+    span = m - 1
+    pos = (int(round(float(obs[0]) * span)), int(round(float(obs[1]) * span)))
+    rel = obs[slice(*off["goal_rel"])]
+    goal = (
+        int(round(pos[0] + float(rel[0]) * span)),
+        int(round(pos[1] + float(rel[1]) * span)),
+    )
+    return known, pos, goal
+
+
+def test_frontier_labels_are_a_function_of_the_observation(tmp_path):
+    """관측(지식 지도)만 보고 전문가 행동을 완전히 재현할 수 있어야 한다."""
+    cfg = DatasetConfig(
+        mazes=3,
+        sizes=(15,),
+        window_size=3,
+        global_size=0,
+        map_size=15,
+        expert="frontier",
+        base_seed=5,
+        expert_episodes=1,
+        noisy_episodes=1,
+        noise_prob=0.05,
+        max_episode_steps=256,
+        out_dir=str(tmp_path),
+    )
+    checked = 0
+    for index in range(cfg.mazes):
+        batch = build_maze_samples(index, cfg)
+        assert batch.obs.shape[1] == observation_dim(3, 0, 15)
+        for row, label in zip(batch.obs, batch.action):
+            known, pos, goal = _decode_belief(row, cfg)
+            assert int(frontier_action(known, pos, goal)) == int(label)
+            checked += 1
+    assert checked > 0
+
+
+def test_frontier_belief_never_contains_the_full_maze(tmp_path):
+    """지식 지도는 정답이 아니다 — 초반 샘플은 미로의 일부만 알고 있어야 한다."""
+    cfg = DatasetConfig(
+        mazes=1,
+        sizes=(15,),
+        global_size=0,
+        map_size=15,
+        expert="frontier",
+        base_seed=1,
+        max_episode_steps=128,
+        out_dir=str(tmp_path),
+    )
+    batch = build_maze_samples(0, cfg)
+    known, _, _ = _decode_belief(batch.obs[0], cfg)
+    assert int((known != UNKNOWN).sum()) <= 9
