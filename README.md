@@ -18,6 +18,8 @@
 - **서버가 응답하지 않으면 클라이언트는 이동하지 않습니다** — 화면 상단에
   `NO SERVER RESPONSE — NOT MOVING` 배너가 뜹니다 (R4).
 
+![규칙 구현체(frontier)로 플레이 중인 클라이언트](docs/screenshot-rule.png)
+
 ## 빠른 시작
 
 ```powershell
