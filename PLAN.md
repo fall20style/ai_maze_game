@@ -3,7 +3,7 @@
 > 버전: v2 (설계 변경)
 > 작성일: 2026-10-23
 > 이전 초안: [`PLAN_v0_draft.md`](./PLAN_v0_draft.md) — 일반 웹 게임 계획. 본 문서가 이를 대체함.
-> 상태: **W2 진행 중** — 학습 파이프라인·SDL 뷰어 완료, 정책 성능 개선 중 (§14)
+> 상태: **W3 완료** — FastAPI 서버 + SDL 클라이언트 분리, 구현체(AI/규칙/사람) 선택 GUI (§14 W3)
 
 ---
 
@@ -32,6 +32,10 @@
 ---
 
 ## 2. 시스템 구성도
+
+> **2026-10-24 갱신** — 아래 다이어그램은 초기(브라우저) 설계다. 실제 구현은
+> **SDL(pygame) 클라이언트 + FastAPI 서버**이며, 최종 구조와 API 계약은 §14 W3 에 있다.
+> 불변 규칙 R1~R4 는 그대로 유지된다.
 
 ```
 ┌──────────────────────────────────────────┐
@@ -661,6 +665,119 @@ braided 50/100% 에서도 120/120 동률, 운동 노이즈 20% 에서도 **55/60
 
 > 재현: `data/frontier`, `checkpoints/frontier`, `checkpoints/frontier_d`.
 > 뷰어 자동 선택은 여전히 `checkpoints/wall`(성공률 100%)을 쓴다.
+
+---
+
+### W3 서버/클라이언트 분리 + 구현체 선택 GUI (2026-10-24)
+
+**목표** — 길찾기 지능을 서버에 두고, GUI는 **보기만** 하게 만든다. 그리고 사용자가
+실행 중에 **AI 구현체 / 규칙 구현체 / 사람**을 골라 같은 미로에서 비교할 수 있게 한다.
+
+#### 1) 구조
+
+```
+┌─────────────────────────────────────────┐
+│  viewer/  (pygame SDL 클라이언트)        │
+│                                         │
+│  app.py      이벤트 루프 · 키 입력        │
+│  api_client.py  urllib HTTP (stdlib)     │
+│  remote.py   서버 JSON → 화면 상태        │
+│  render.py   그리기 전용                  │
+│  layout.py   순수 레이아웃 계산           │
+└──────────────────┬──────────────────────┘
+                   │  HTTP (127.0.0.1:8000)
+                   ▼
+┌─────────────────────────────────────────┐
+│  app/api/  (FastAPI, 단일 워커)          │
+│                                         │
+│  main.py     엔드포인트                   │
+│  session.py  미로 + MazeEnv + Brain      │
+│  brains.py   ai | rule | human           │
+│  schemas.py  클라이언트와 공유하는 계약    │
+│                                         │
+│  ai   → LoRA-BERT 체크포인트 (프로세스 캐시)│
+│  rule → wall_follow_action | frontier    │
+│  human→ /action 대기                     │
+└─────────────────────────────────────────┘
+```
+
+**서버가 소유하는 것**: 미로 생성, 관측 인코딩, 이동 결정, 벽 판정, 승리 판정, 구현체 교체.
+**클라이언트가 소유하는 것**: 렌더링, 입력 수집, 애니메이션 보간.
+
+#### 2) API 계약
+
+| 메서드 | 경로 | 역할 |
+|---|---|---|
+| GET | `/health` | 상태 + 자동 선택된 체크포인트 경로 |
+| GET | `/brains` | 선택 가능한 구현체 목록 |
+| POST | `/games` | 판 생성 (`size`, `algorithm`, `brain`, `rule`, `seed`, …) |
+| GET | `/games/{id}` | 현재 상태 (읽기 전용) |
+| POST | `/games/{id}/advance` | Brain 이 스스로 이동 (`ai`/`rule`) |
+| POST | `/games/{id}/action` | 사람 행동 적용 (`human` 전용) |
+| POST | `/games/{id}/brain` | 구현체 교체 (같은 미로에서 재시작) |
+| POST | `/games/{id}/reset` | 같은 미로 처음부터 |
+| POST | `/games/{id}/new-maze` | 새 미로 |
+| DELETE | `/games/{id}` | 세션 종료 |
+
+모드가 맞지 않는 호출은 `409`, 없는 게임은 `404`, 짝수 크기 미로는 `422` 로 거절한다.
+
+#### 3) 구현체 선택 GUI
+
+상단에 칩 세 개(`1 AI` · `2 RULE` · `3 HUMAN`)를 두고, 클릭 또는 키 `1/2/3` 으로 바꾼다.
+교체는 `POST /brain` 한 번이며, 관측 정의가 구현체마다 다르므로 **같은 미로에서 스텝 0으로
+되돌아간다**(미로 seed 는 유지). 그래서 "같은 판에서 AI와 규칙을 번갈아 돌려 비교"가 된다.
+
+- `rule` 은 `--rule wall|frontier` 로 고른다 (기본 `wall`).
+- AI 체크포인트는 서버가 `MAZE_CHECKPOINT` → `checkpoints/wall` → `checkpoints/v3` → 최신 순으로
+  자동 선택한다. 클라이언트에는 경로조차 전달하지 않는다(라벨만 표시).
+
+#### 4) 불변 규칙 검증
+
+| # | 규칙 | 검증 |
+|---|---|---|
+| R1 | 클라이언트에 경로 탐색 없음 | `tests/test_client.py::test_viewer_has_no_pathfinding_code` + `viewer/*.py` 토큰 스캔 |
+| R2 | 클라이언트가 이동을 결정하지 않음 | 클라이언트는 `/advance` 또는 `/action` 만 호출. 상태는 서버 응답을 **복사**만 한다 (`test_server_state_is_mirrored_not_recomputed`) |
+| R3 | 벽 판정 권위는 서버 | `test_server_rejects_client_action_that_hits_a_wall` — 벽으로 보낸 행동은 `moved=false`, 위치 불변 |
+| R4 | 서버 무응답 시 정지 | `test_no_movement_when_the_server_does_not_answer` + 화면 상단 `NO SERVER RESPONSE — NOT MOVING` 배너 |
+
+추가로 `test_client_modules_do_not_import_torch_or_the_game_rules` 가 클라이언트 프로세스에
+`torch`·`transformers`·`app.game.*` 가 로드되지 않음을 subprocess 로 확인한다.
+
+#### 5) 벤치마크 — 예상대로 규칙이 앞선다
+
+60 미로 · 15×15 · seed 90000~90059 (`python -m training.compare_brains --mazes 60 --size 15`):
+
+| 구현체 | 성공 | 평균 스텝 | optimality | 루프율 |
+|---|---|---|---|---|
+| `ai` — `checkpoints/wall` (LoRA-BERT) | 60/60 | 96.9 | 1.865 | 0.19 |
+| `rule` — 왼손 법칙 | 60/60 | 96.9 | 1.865 | 0.19 |
+| `rule` — frontier 탐색 | 60/60 | **94.7** | **1.851** | **0.17** |
+
+같은 미로 짝지음:
+
+- **AI vs 왼손 법칙 — 60/60 판에서 스텝 수 완전 동일** (더 빠름 0 · 동일 60 · 더 느림 0).
+  모델은 규칙의 결정을 그대로 재현하며, 규칙과 **구별되지 않는다**.
+- **frontier vs 왼손 법칙 — 더 빠름 30 · 동일 4 · 더 느림 26** (평균 −2.3 스텝).
+  같은 규칙 계열에서 더 나은 전략을 고르는 편이 학습된 모델보다 앞선다.
+
+즉 사용자가 GUI에서 `1`(AI)과 `2`(RULE)를 번갈아 누르면, **같은 미로에서 스텝 수가
+똑같이 나오는 것**을 직접 확인할 수 있다. 이는 W2.7 의 결론(모델 = 규칙의 증류)을
+서빙 경로에서 재현한 것이다.
+
+#### 6) 실행
+
+```powershell
+# 터미널 1 — 서버
+cd server
+uvicorn app.api.main:app --port 8000
+
+# 터미널 2 — 클라이언트
+cd server
+python -m viewer.app --size 15          # 기본: AI
+python -m viewer.app --brain rule       # 규칙(왼손 법칙)
+python -m viewer.app --brain rule --rule frontier
+python -m viewer.app --brain human      # 사람
+```
 
 ---
 
