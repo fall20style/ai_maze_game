@@ -20,6 +20,7 @@ import pygame
 import torch
 
 from app.game.actions import Action
+from app.game.env import ALLOWED_GLOBAL_SIZES, ALLOWED_WINDOW_SIZES, observation_dim
 
 #: 방향키 / WASD → 행동
 KEY_TO_ACTION: dict[int, Action] = {
@@ -51,6 +52,27 @@ class Brain(Protocol):
     def note_step(self, now: float) -> None: ...
 
     def probabilities(self) -> np.ndarray | None: ...
+
+
+def _resolve_obs_spec(cfg) -> tuple[int, int]:
+    """체크포인트의 ``obs_dim`` 과 일치하는 (window, global) 조합을 찾는다.
+
+    ``window_size``/``global_size`` 가 저장되기 전에 만든 구 체크포인트
+    (예: 29차원)도 뷰어에서 열 수 있게 하기 위한 호환 처리다.
+    """
+    window = int(getattr(cfg, "window_size", 3))
+    glob = int(getattr(cfg, "global_size", 5))
+    if observation_dim(window, glob) == int(cfg.obs_dim):
+        return window, glob
+
+    for w in ALLOWED_WINDOW_SIZES:
+        for g in ALLOWED_GLOBAL_SIZES:
+            if observation_dim(w, g) == int(cfg.obs_dim):
+                return w, g
+
+    raise ValueError(
+        f"obs_dim={cfg.obs_dim} 에 맞는 (window_size, global_size) 조합이 없습니다"
+    )
 
 
 class HumanBrain:
@@ -100,13 +122,12 @@ class PolicyBrain:
         from app.ml.runner import PolicyRunner
 
         self.model = BertPolicy.load(checkpoint)
-        self.window_size = int(getattr(self.model.cfg, "window_size", 3))
-        self.global_size = int(getattr(self.model.cfg, "global_size", 5))
+        self.window_size, self.global_size = _resolve_obs_spec(self.model.cfg)
         self.runner = PolicyRunner(self.model, seq_len=seq_len)
         self.interval = max(0.01, float(step_interval))
         self.temperature = float(temperature)
         self.animation_duration = max(0.05, min(0.12, self.interval * 0.8))
-        self.label = f"AI · {Path(checkpoint).name}"
+        self.label = f"AI · {Path(checkpoint).parent.name}/{Path(checkpoint).name}"
         self._probs: np.ndarray | None = None
         self._next_at = 0.0
 

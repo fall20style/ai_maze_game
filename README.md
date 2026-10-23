@@ -19,10 +19,28 @@ cd server
 python -m pip install -r requirements.txt
 ```
 
-### 1. SDL 게임 화면 (사람 플레이)
+### 1. SDL 게임 화면 — AI 자동 플레이 (기본)
 
 ```powershell
 python -m viewer.app --size 15
+```
+
+체크포인트를 생략하면 `checkpoints/v3/best.pt` → 가장 최근 `*/best.pt` 순으로
+자동 선택해 **AI가 스스로 플레이**합니다. 특정 모델을 쓰려면:
+
+```powershell
+python -m viewer.app --checkpoint checkpoints/smoke4/best.pt --size 15
+```
+
+- `--step-interval 0.05` 더 빠르게, `--step-interval 0.3` 천천히
+- `--temperature 0.7` 확률적 플레이
+- `--max-steps 200` 에피소드 길이 제한
+- `--fixed-endpoints` 시작/목적지 고정 (기본: 모델 학습 분포와 같은 무작위 배치)
+
+### 2. 사람 플레이
+
+```powershell
+python -m viewer.app --human --size 15
 ```
 
 | 키 | 동작 |
@@ -33,21 +51,11 @@ python -m viewer.app --size 15
 | SPACE | 일시정지 |
 | ESC / Q | 종료 |
 
-### 2. 학습된 모델 자동 플레이
-
-```powershell
-python -m viewer.app --checkpoint checkpoints/v3/best.pt --size 15
-```
-
-- `--step-interval 0.05` 로 더 빠르게, `--temperature 0.7` 로 확률적 플레이
-- `--fixed-endpoints` 로 시작/목적지를 고정 (기본: 모델 학습 분포와 같은 무작위 배치)
-- `--max-steps 200` 으로 에피소드 길이 제한
-
 ### 3. 헤드리스 스냅샷 (CI/문서용)
 
 ```powershell
 $env:SDL_VIDEODRIVER = "dummy"
-python -m viewer.app --checkpoint checkpoints/v3/best.pt --snapshot shot.png --snapshot-frame 120
+python -m viewer.app --snapshot shot.png --snapshot-frame 120
 ```
 
 ## 학습 파이프라인

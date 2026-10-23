@@ -521,7 +521,7 @@ UP 24.3%  |  DOWN 25.8%  |  LEFT 24.7%  |  RIGHT 25.2%   (max 25.8%)
 | 항목 | 내용 |
 |---|---|
 | 스택 | Python + pygame 2.6.1 (SDL 2.28.4) |
-| 실행 | `python -m viewer.app --size 15` · `--checkpoint checkpoints/v3/best.pt` |
+| 실행 | `python -m viewer.app --size 15` (체크포인트 자동 선택 → AI 플레이) · `--human` 으로 사람 조작 |
 | 렌더링 | 미로 타일, 방문 틴트, 이동 궤적, 목표 펄스, 3×3 관측 창, HUD, 행동 확률 바 |
 | 애니메이션 | ease-out 보간, 벽 충돌 시 붉은 링, 승리/타임아웃 오버레이 |
 | Brain | `HumanBrain`(키 입력) · `PolicyBrain`(체크포인트) — 뷰어는 이동을 결정하지 않는다 |

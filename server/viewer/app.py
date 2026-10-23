@@ -1,10 +1,13 @@
 """SDL(pygame) 게임 뷰어.
 
-    # 사람 플레이
+    # AI 자동 플레이 (체크포인트 자동 선택)
     python -m viewer.app --size 15
 
-    # LoRA-BERT 체크포인트 자동 플레이
+    # 특정 체크포인트
     python -m viewer.app --checkpoint checkpoints/v3/best.pt --size 15
+
+    # 사람 플레이
+    python -m viewer.app --human --size 15
 
 뷰어는 **이동을 결정하지 않는다**. :class:`viewer.brains.Brain` 이 돌려준 행동을
 환경에 적용하고 그리기만 한다 (PLAN §1 R2). 나중에 FastAPI 서버가 준비되면
@@ -15,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from pathlib import Path
 from typing import Sequence
 
 import pygame
@@ -129,6 +133,24 @@ class Session:
         self.brain.note_step(now)
 
 
+def _discover_checkpoint(server_root: Path) -> str | None:
+    """``--checkpoint`` 생략 시 사용할 체크포인트.
+
+    문서화된 기본 모델(``checkpoints/v3/best.pt``)을 우선하고, 없으면
+    가장 최근에 만든 체크포인트를 쓴다.
+    """
+    preferred = server_root / "checkpoints" / "v3" / "best.pt"
+    if preferred.exists():
+        return str(preferred)
+
+    candidates = sorted(
+        (server_root / "checkpoints").glob("*/best.pt"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return str(candidates[0]) if candidates else None
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="SDL 미로 게임 뷰어")
     parser.add_argument("--size", type=int, default=15, help="미로 크기 (홀수, >=5)")
@@ -138,10 +160,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--checkpoint",
         type=str,
         default=None,
-        help="LoRA-BERT 체크포인트. 주어지면 모델이 자동으로 플레이한다.",
+        help="LoRA-BERT 체크포인트 (생략 시 v3 → 최신 순으로 자동 선택)",
     )
     parser.add_argument(
-        "--human", action="store_true", help="체크포인트가 있어도 사람이 조작"
+        "--human",
+        action="store_true",
+        help="체크포인트를 자동 선택하지 않고 사람이 조작",
     )
     parser.add_argument(
         "--fixed-endpoints",
@@ -184,6 +208,14 @@ def _validate(args: argparse.Namespace) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     _validate(args)
+
+    if not args.checkpoint and not args.human:
+        discovered = _discover_checkpoint(Path(__file__).resolve().parents[1])
+        if discovered:
+            args.checkpoint = discovered
+            print(f"[viewer] auto checkpoint: {discovered}")
+        else:
+            print("[viewer] no checkpoint found — falling back to human mode")
 
     if args.checkpoint:
         try:
