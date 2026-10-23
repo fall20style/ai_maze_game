@@ -110,6 +110,8 @@ def train(cfg: TrainConfig) -> dict:
     policy_cfg = PolicyConfig(
         obs_dim=obs_dim,
         seq_len=cfg.seq_len,
+        window_size=window_size,
+        global_size=global_size,
         pretrained=cfg.pretrained,
         lora_r=cfg.lora_r,
         lora_alpha=cfg.lora_alpha,

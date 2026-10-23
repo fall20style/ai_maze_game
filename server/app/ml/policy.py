@@ -34,9 +34,13 @@ DEFAULT_PRETRAINED = "prajjwal1/bert-tiny"
 
 @dataclass
 class PolicyConfig:
-    obs_dim: int = 29
+    obs_dim: int = 54
     num_actions: int = 4
     seq_len: int = 32
+    #: 관측 정의 — 체크포인트가 스스로를 설명하도록 함께 저장한다.
+    #: (뷰어/서버가 같은 ``MazeEnv`` 설정으로 관측을 만들기 위해 필요)
+    window_size: int = 3
+    global_size: int = 5
     hidden_size: int = 128
     num_hidden_layers: int = 2
     num_attention_heads: int = 2
