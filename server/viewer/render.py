@@ -1,7 +1,7 @@
 """SDL(pygame) 렌더러 — **그리기만** 한다.
 
-이동 결정은 전부 :mod:`viewer.brains` 의 Brain 이 담당한다.
-여기에는 경로 탐색/휴리스틱이 존재하지 않는다 (PLAN §1 R1).
+이동 결정은 전부 서버(``app.api``)가 한다. 클라이언트는 HTTP 로 받은 상태를
+그릴 뿐이고, 여기에는 경로 탐색/휴리스틱이 존재하지 않는다 (PLAN §1 R1).
 """
 
 from __future__ import annotations
@@ -16,31 +16,60 @@ from . import theme
 from .layout import BoardLayout, fit_board
 
 if TYPE_CHECKING:  # 순환 import 회피 (런타임에는 필요 없음)
-    from .app import Session
+    from .remote import RemoteSession
 
-HUD_TOP = 88
+HUD_TOP = 100
 HUD_BOTTOM = 112
 
 _ACTION_LABELS = ("UP", "DOWN", "LEFT", "RIGHT")
 _ACTION_VECTORS = ((0, -1), (0, 1), (-1, 0), (1, 0))
+
+#: 구현체 선택 칩 — 순서가 곧 키 1/2/3 이다.
+BRAIN_ORDER = ("ai", "rule", "human")
+BRAIN_CHIP_TEXT = {"ai": "1  AI", "rule": "2  RULE", "human": "3  HUMAN"}
+BRAIN_CHIP_SIZE = 11
+BRAIN_CHIP_X = 26
+BRAIN_CHIP_Y = 50
+BRAIN_CHIP_GAP = 8
+BRAIN_CHIP_PAD_X = 11
+BRAIN_CHIP_PAD_Y = 5
+
+#: 선택 칩 좌표는 그리기와 클릭 판정이 **같은 함수**를 쓰도록 모듈에 둔다.
+_SELECTOR_FONTS: "FontBook | None" = None
 
 
 class FontBook:
     """폰트 캐시. Windows/macOS/Linux 순서로 쓸 만한 글꼴을 찾는다."""
 
     _FAMILIES = ("segoeui", "malgungothic", "arial", "dejavusans", "liberationsans")
+    #: 한글 글리프가 있는 글꼴 (없으면 기본 글꼴로 떨어진다)
+    _KOREAN_FAMILIES = (
+        "malgungothic",
+        "applegothic",
+        "nanumgothic",
+        "notosanscjkkr",
+        "notosanscjk",
+        "unifont",
+    )
 
     def __init__(self) -> None:
         self.family = next(
             (name for name in self._FAMILIES if pygame.font.match_font(name)), None
         )
-        self._cache: dict[tuple[int, bool], pygame.font.Font] = {}
+        self.korean_family = next(
+            (name for name in self._KOREAN_FAMILIES if pygame.font.match_font(name)),
+            self.family,
+        )
+        self._cache: dict[tuple[int, bool, str | None], pygame.font.Font] = {}
 
-    def get(self, size: int, bold: bool = False) -> pygame.font.Font:
-        key = (int(size), bool(bold))
+    def get(
+        self, size: int, bold: bool = False, korean: bool = False
+    ) -> pygame.font.Font:
+        family = self.korean_family if korean else self.family
+        key = (int(size), bool(bold), family)
         font = self._cache.get(key)
         if font is None:
-            font = pygame.font.SysFont(self.family, key[0], bold=key[1])
+            font = pygame.font.SysFont(family, key[0], bold=key[1])
             self._cache[key] = font
         return font
 
@@ -53,6 +82,34 @@ def _rect(box: tuple[float, float, float, float]) -> pygame.Rect:
         max(1, int(round(w))),
         max(1, int(round(h))),
     )
+
+
+def _selector_fonts() -> "FontBook":
+    """선택 칩 전용 폰트 캐시 (pygame.font.init 이후에 만들어진다)."""
+    global _SELECTOR_FONTS
+    if _SELECTOR_FONTS is None:
+        _SELECTOR_FONTS = FontBook()
+    return _SELECTOR_FONTS
+
+
+def brain_selector_rects(width: int) -> list[tuple[str, pygame.Rect]]:
+    """상단 구현체 선택 칩의 ``(kind, rect)`` 목록.
+
+    그리기와 클릭 판정이 이 함수 하나를 공유하므로 좌표가 어긋날 수 없다.
+    ``width`` 는 지금 좌표 계산에 쓰이지 않지만, 창 크기에 따라 배치를 바꿀 때를
+    위해 시그니처에 남겨 둔다.
+    """
+    font = _selector_fonts().get(BRAIN_CHIP_SIZE)
+    height = font.get_height() + 2 * BRAIN_CHIP_PAD_Y
+    rects: list[tuple[str, pygame.Rect]] = []
+    x = float(BRAIN_CHIP_X)
+    for kind in BRAIN_ORDER:
+        chip_w = font.size(BRAIN_CHIP_TEXT[kind])[0] + 2 * BRAIN_CHIP_PAD_X
+        rects.append(
+            (kind, pygame.Rect(int(x), BRAIN_CHIP_Y, int(chip_w), int(height)))
+        )
+        x += chip_w + BRAIN_CHIP_GAP
+    return rects
 
 
 class Renderer:
@@ -79,7 +136,9 @@ class Renderer:
         anchor: str = "topleft",
         bold: bool = False,
     ) -> pygame.Rect:
-        surf = self.fonts.get(size, bold).render(text, True, color)
+        surf = self.fonts.get(size, bold, korean=not text.isascii()).render(
+            text, True, color
+        )
         rect = surf.get_rect(**{anchor: (int(pos[0]), int(pos[1]))})
         screen.blit(surf, rect)
         return rect
@@ -111,7 +170,7 @@ class Renderer:
     def draw(
         self,
         screen: pygame.Surface,
-        session: "Session",
+        session: "RemoteSession",
         now: float,
         paused: bool,
     ) -> None:
@@ -141,12 +200,15 @@ class Renderer:
             self._draw_paused(screen, board_panel)
         if session.env.done:
             self._draw_result(screen, session, board_panel)
+        if session.error:
+            # 서버 응답이 없으면 화면은 마지막 상태에서 멈춘다 (PLAN §1 R4)
+            self._draw_error(screen, session.error, board_panel)
 
     # ------------------------------------------------------------------ 보드
     def _draw_board(
         self,
         screen: pygame.Surface,
-        session: "Session",
+        session: "RemoteSession",
         layout: BoardLayout,
         panel: pygame.Rect,
         now: float,
@@ -198,7 +260,7 @@ class Renderer:
         self,
         screen: pygame.Surface,
         layout: BoardLayout,
-        session: "Session",
+        session: "RemoteSession",
         now: float,
     ) -> None:
         gx, gy = layout.center(*session.maze.goal)
@@ -224,7 +286,7 @@ class Renderer:
         self,
         screen: pygame.Surface,
         layout: BoardLayout,
-        session: "Session",
+        session: "RemoteSession",
     ) -> None:
         half = session.env.window_size // 2
         px, py = session.env.position
@@ -243,7 +305,7 @@ class Renderer:
         self,
         screen: pygame.Surface,
         layout: BoardLayout,
-        session: "Session",
+        session: "RemoteSession",
         now: float,
     ) -> None:
         ax, ay = layout.center(*session.motion.position(now))
@@ -296,7 +358,7 @@ class Renderer:
     def _draw_hud(
         self,
         screen: pygame.Surface,
-        session: "Session",
+        session: "RemoteSession",
         width: int,
         height: int,
         paused: bool,
@@ -307,14 +369,7 @@ class Renderer:
         pygame.draw.rect(screen, theme.PANEL, (0, 0, width, HUD_TOP))
         pygame.draw.line(screen, theme.PANEL_EDGE, (0, HUD_TOP - 1), (width, HUD_TOP - 1))
 
-        self._text(screen, "MAZE RUNNER", 23, theme.TEXT, (26, 18), bold=True)
-        self._text(
-            screen,
-            f"SDL viewer  ·  brain: {session.brain.label}",
-            12,
-            theme.MUTED,
-            (27, 52),
-        )
+        self._text(screen, "MAZE RUNNER", 23, theme.TEXT, (26, 16), bold=True)
 
         chips = [
             f"{session.maze.width} x {session.maze.height}",
@@ -325,14 +380,26 @@ class Renderer:
         total = sum(self._chip_width(t, 12) for t in chips) + gap * (len(chips) - 1)
         x = width - 26 - total
         for text in chips:
-            x += self._chip(screen, text, 12, x, 28) + gap
+            x += self._chip(screen, text, 12, x, 20) + gap
+
+        self._draw_brain_selector(screen, session)
+        self._text(
+            screen,
+            f"{session.brain.label}  ·  all decisions on the server",
+            11,
+            theme.MUTED,
+            (width - 26, BRAIN_CHIP_Y + 7),
+            anchor="topright",
+        )
 
         # --- 하단
         top = height - HUD_BOTTOM
         pygame.draw.rect(screen, theme.PANEL, (0, top, width, HUD_BOTTOM))
         pygame.draw.line(screen, theme.PANEL_EDGE, (0, top), (width, top))
 
-        if paused:
+        if session.error:
+            status, color = "OFFLINE", theme.BAD
+        elif paused:
             status, color = "PAUSED", theme.MUTED
         elif env.won:
             status, color = "GOAL", theme.OK
@@ -355,9 +422,13 @@ class Renderer:
         if probs is not None:
             self._draw_probabilities(screen, probs, width, top)
         else:
+            if session.brain_kind == "human":
+                hint = "ARROWS / WASD   move"
+            else:
+                hint = "SERVER   decides every move"
             self._text(
                 screen,
-                "ARROWS / WASD   move",
+                hint,
                 13,
                 theme.TEXT,
                 (width - 26, top + 26),
@@ -370,6 +441,30 @@ class Renderer:
                 theme.MUTED,
                 (width - 26, top + 52),
                 anchor="topright",
+            )
+
+    def _draw_brain_selector(
+        self, screen: pygame.Surface, session: "RemoteSession"
+    ) -> None:
+        """구현체 선택 칩 (AI / RULE / HUMAN). 좌표는 클릭 판정과 공유한다."""
+        font = self.fonts.get(BRAIN_CHIP_SIZE)
+        active = session.brain_kind
+        for kind, rect in brain_selector_rects(screen.get_width()):
+            selected = kind == active
+            bg = (
+                theme.lerp(theme.PANEL_EDGE, theme.ACCENT, 0.55)
+                if selected
+                else theme.PANEL_EDGE
+            )
+            pygame.draw.rect(screen, bg, rect, border_radius=rect.height // 2)
+            if selected:
+                pygame.draw.rect(
+                    screen, theme.ACCENT, rect, width=1, border_radius=rect.height // 2
+                )
+            color = theme.TEXT if selected else theme.MUTED
+            surf = font.render(BRAIN_CHIP_TEXT[kind], True, color)
+            screen.blit(
+                surf, (rect.x + BRAIN_CHIP_PAD_X, rect.centery - surf.get_height() // 2)
             )
 
     def _stat(
@@ -442,6 +537,41 @@ class Renderer:
         )
 
     # ------------------------------------------------------------------ 오버레이
+    def _draw_error(
+        self, screen: pygame.Surface, message: str, panel: pygame.Rect
+    ) -> None:
+        """서버 오프라인 배너. 이 상태에서 클라이언트는 이동하지 않는다 (R4)."""
+        title = "NO SERVER RESPONSE — NOT MOVING"
+        detail = message if len(message) <= 96 else message[:93] + "..."
+        title_font = self.fonts.get(12, True)
+        detail_font = self.fonts.get(11)
+
+        box_w = max(title_font.size(title)[0], detail_font.size(detail)[0]) + 44
+        box_w = min(box_w, max(200, panel.width - 24))
+        box_h = title_font.get_height() + detail_font.get_height() + 26
+        box = pygame.Rect(0, 0, int(box_w), int(box_h))
+        box.midtop = (panel.centerx, panel.top + 12)
+
+        pygame.draw.rect(screen, theme.PANEL, box, border_radius=12)
+        pygame.draw.rect(screen, theme.BAD, box, width=1, border_radius=12)
+        self._text(
+            screen,
+            title,
+            12,
+            theme.BAD,
+            (box.centerx, box.top + 8),
+            anchor="midtop",
+            bold=True,
+        )
+        self._text(
+            screen,
+            detail,
+            11,
+            theme.MUTED,
+            (box.centerx, box.top + 10 + title_font.get_height()),
+            anchor="midtop",
+        )
+
     def _draw_paused(self, screen: pygame.Surface, panel: pygame.Rect) -> None:
         text = "PAUSED"
         font = self.fonts.get(12)
@@ -462,7 +592,7 @@ class Renderer:
     def _draw_result(
         self,
         screen: pygame.Surface,
-        session: "Session",
+        session: "RemoteSession",
         panel: pygame.Rect,
     ) -> None:
         width, height = screen.get_size()

@@ -1,12 +1,19 @@
-"""SDL(pygame) 게임 뷰어 — 렌더링 전용.
+"""SDL(pygame) 게임 클라이언트 — 렌더링 + 입력 전달만 한다.
 
-이 패키지에는 경로 탐색 코드가 없다. 이동은 :mod:`viewer.brains` 의 Brain 이
-결정하고, Brain 은 모델(또는 사람 입력)을 감쌀 뿐이다.
+이 패키지에는 경로 탐색 코드도, 모델도, 미로 규칙도 없다. 이동 결정·벽 판정·승리
+판정은 전부 서버(:mod:`app.api`)가 하고, 클라이언트는 HTTP 로 받은 상태를 그린다
+(PLAN §1 R1·R2·R3). 서버 응답이 없으면 이동하지 않는다 (R4).
 
 실행::
 
+    # 터미널 1 — 서버
+    uvicorn app.api.main:app --port 8000
+
+    # 터미널 2 — 클라이언트
     python -m viewer.app --size 15
-    python -m viewer.app --checkpoint checkpoints/v3/best.pt
+
+구현체는 실행 중에 바꿀 수 있다: 키 ``1`` AI, ``2`` 규칙, ``3`` 사람
+(상단 칩 클릭도 동일).
 
 패키지 초기화에서 하위 모듈을 import 하지 않는다. 레이아웃 계산만 쓰는 코드
 (테스트 등)가 pygame/torch 를 끌고 오지 않게 하기 위해서다.
