@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import random
+from collections import deque
 from dataclasses import dataclass
 from typing import Literal
 
@@ -81,10 +82,17 @@ def generate(
     height: int = 15,
     seed: int | None = None,
     algorithm: Algorithm = "dfs",
+    randomize_endpoints: bool = False,
 ) -> Maze:
     """미로를 생성한다.
 
     ``seed`` 가 주어지면 항상 동일한 미로가 나온다 (재현성).
+
+    ``randomize_endpoints=True`` 이면 시작점과 목적지를 **무작위로 배치**한다
+    (학습 데이터용). 목적지는 시작점에서 가장 먼 칸으로 잡아 최단 경로가
+    충분히 길어지도록 한다.
+
+    기본값(``False``)은 게임 UI용 고정 배치 — 시작 좌상단, 목적지 우하단.
     """
     _validate_size("width", width)
     _validate_size("height", height)
@@ -103,12 +111,63 @@ def generate(
     else:
         _carve_prim(grid, rng)
 
-    start: Point = (1, 1)
-    goal: Point = (width - 2, height - 2)
+    if randomize_endpoints:
+        start, goal = _random_endpoints(grid, rng)
+    else:
+        start = (1, 1)
+        goal = (width - 2, height - 2)
+
     grid[start[1], start[0]] = FLOOR
     grid[goal[1], goal[0]] = FLOOR
 
     return Maze(grid=grid, start=start, goal=goal, seed=seed, algorithm=algorithm)
+
+
+def _bfs_distances(grid: np.ndarray, source: Point) -> np.ndarray:
+    """미로 내부 BFS 거리 (도달 불가 = -1).
+
+    ``solver`` 모듈과 순환 import 를 피하기 위해 여기서 최소 구현을 둔다.
+    """
+    h, w = grid.shape
+    dist = np.full((h, w), -1, dtype=np.int32)
+    sx, sy = source
+    dist[sy, sx] = 0
+    queue: deque[Point] = deque([source])
+
+    while queue:
+        x, y = queue.popleft()
+        d = dist[y, x] + 1
+        for dx, dy in _DIRS:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < w and 0 <= ny < h and grid[ny, nx] == FLOOR and dist[ny, nx] == -1:
+                dist[ny, nx] = d
+                queue.append((nx, ny))
+
+    return dist
+
+
+def _random_endpoints(grid: np.ndarray, rng: random.Random) -> tuple[Point, Point]:
+    """시작점을 무작위로, 목적지를 시작점에서 가장 먼 칸으로 선택한다."""
+    ys, xs = np.nonzero(grid == FLOOR)
+    cells: list[Point] = list(zip(xs.tolist(), ys.tolist()))
+    if len(cells) < 2:
+        raise RuntimeError("maze has too few floor cells to place endpoints")
+
+    start = cells[rng.randrange(len(cells))]
+    dist = _bfs_distances(grid, start)
+
+    # 최장 거리 칸 (동률이면 좌표 순서로 결정 → 재현성 유지)
+    goal = start
+    best = -1
+    for cell in cells:
+        d = int(dist[cell[1], cell[0]])
+        if d > best:
+            best = d
+            goal = cell
+
+    if goal == start:
+        raise RuntimeError("failed to place distinct endpoints")
+    return start, goal
 
 
 def _candidate_neighbors(grid: np.ndarray, x: int, y: int) -> list[Point]:

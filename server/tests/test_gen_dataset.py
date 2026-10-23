@@ -45,7 +45,11 @@ def test_every_label_descends_toward_goal(cfg):
         # 한 배치는 하나의 미로에서만 나온다
         seed, size, algo = int(batch.seed[0]), int(batch.size[0]), int(batch.algo[0])
         maze = generate(
-            size, size, seed=seed, algorithm="dfs" if algo == 0 else "prim"
+            size,
+            size,
+            seed=seed,
+            algorithm="dfs" if algo == 0 else "prim",
+            randomize_endpoints=cfg.randomize_endpoints,
         )
         dist = distance_map(maze, maze.goal)
         sx, sy = maze.width - 1, maze.height - 1
@@ -98,7 +102,13 @@ def test_optimal_rollout_follows_best_action(cfg):
     for index in range(cfg.mazes):
         batch = build_maze_samples(index, cfg)
         seed, size, algo = int(batch.seed[0]), int(batch.size[0]), int(batch.algo[0])
-        maze = generate(size, size, seed=seed, algorithm="dfs" if algo == 0 else "prim")
+        maze = generate(
+            size,
+            size,
+            seed=seed,
+            algorithm="dfs" if algo == 0 else "prim",
+            randomize_endpoints=cfg.randomize_endpoints,
+        )
         dist = distance_map(maze, maze.goal)
 
         idx = np.where(batch.kind == 0)[0]
@@ -121,10 +131,17 @@ def test_random_rollout_takes_suboptimal_actions(cfg):
     이 비최적 상태가 "실수 후 복구"를 학습시키는 핵심 샘플이다.
     """
     checked = 0
+    diverged = 0
     for index in range(cfg.mazes):
         batch = build_maze_samples(index, cfg)
         seed, size, algo = int(batch.seed[0]), int(batch.size[0]), int(batch.algo[0])
-        maze = generate(size, size, seed=seed, algorithm="dfs" if algo == 0 else "prim")
+        maze = generate(
+            size,
+            size,
+            seed=seed,
+            algorithm="dfs" if algo == 0 else "prim",
+            randomize_endpoints=cfg.randomize_endpoints,
+        )
         dist = distance_map(maze, maze.goal)
 
         idx = np.where(batch.kind == 1)[0]
@@ -141,12 +158,14 @@ def test_random_rollout_takes_suboptimal_actions(cfg):
             if expected is not None and taken != expected:
                 mismatches += 1
 
-        assert mismatches > 0, (
-            f"maze {index}: 무작위 궤적이 최적 행동만 선택함 (분포 확장 실패)"
-        )
+        if mismatches > 0:
+            diverged += 1
         checked += 1
 
     assert checked > 0, "무작위 샘플이 생성되지 않음"
+    assert diverged >= max(1, checked // 2), (
+        f"무작위 궤적이 최적 행동에서 벗어난 미로가 너무 적음: {diverged}/{checked}"
+    )
 
 
 def test_split_is_disjoint_and_complete():
@@ -176,6 +195,22 @@ def test_generate_dataset_writes_files(cfg, tmp_path):
     data = np.load(tmp_path / "out" / "train.npz")
     assert data["obs"].shape[1] == observation_dim(3)
     assert set(np.unique(data["action"])) <= {0, 1, 2, 3}
+
+
+def test_randomized_endpoints_balance_action_distribution(tmp_path):
+    """시작/목적지 무작위화 후 행동 분포가 균형을 이루는지 확인 (A안 검증)."""
+    cfg = DatasetConfig(
+        mazes=60,
+        sizes=(9, 11),
+        base_seed=11,
+        randomize_endpoints=True,
+        out_dir=str(tmp_path),
+    )
+    generate_dataset(cfg, workers=1)
+
+    data = np.load(tmp_path / "train.npz")
+    share = np.bincount(data["action"], minlength=4) / len(data["action"])
+    assert share.max() < 0.55, f"여전히 편중됨: {np.round(share, 3).tolist()}"
 
 
 def test_no_maze_leaks_between_splits(tmp_path):

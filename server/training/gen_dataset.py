@@ -52,6 +52,7 @@ class DatasetConfig:
     base_seed: int = 0
     random_episodes: int = 1
     max_episode_steps: int = 512
+    randomize_endpoints: bool = True
     out_dir: str = "data"
 
     def to_json(self) -> dict:
@@ -82,7 +83,13 @@ def _maze_params(index: int, cfg: DatasetConfig) -> tuple[int, int, int, str]:
 def build_maze_samples(index: int, cfg: DatasetConfig) -> MazeSamples:
     """미로 하나에 대한 학습 샘플을 만든다 (워커 함수 — 반드시 모듈 레벨)."""
     width, height, seed, algorithm = _maze_params(index, cfg)
-    maze = generate(width, height, seed=seed, algorithm=algorithm)
+    maze = generate(
+        width,
+        height,
+        seed=seed,
+        algorithm=algorithm,
+        randomize_endpoints=cfg.randomize_endpoints,
+    )
     dist = distance_map(maze, maze.goal)
 
     path = bfs_path(maze, maze.start, maze.goal)
@@ -254,6 +261,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--base-seed", type=int, default=0)
     p.add_argument("--random-episodes", type=int, default=1)
     p.add_argument("--max-episode-steps", type=int, default=512)
+    p.add_argument(
+        "--no-randomize-endpoints",
+        dest="randomize_endpoints",
+        action="store_false",
+        help="시작/목적지를 고정 코너에 배치 (기본: 무작위)",
+    )
     p.add_argument("--out", type=str, default="data")
     p.add_argument("--workers", type=int, default=1)
     return p.parse_args(argv)
@@ -269,6 +282,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         base_seed=args.base_seed,
         random_episodes=args.random_episodes,
         max_episode_steps=args.max_episode_steps,
+        randomize_endpoints=args.randomize_endpoints,
         out_dir=args.out,
     )
     summary = generate_dataset(cfg, workers=args.workers)

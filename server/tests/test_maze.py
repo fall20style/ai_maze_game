@@ -85,3 +85,35 @@ def test_seed_is_recorded():
     maze = generate(9, 9, seed=2024)
     assert maze.seed == 2024
     assert maze.seed_hex() == "0x000007e8"
+
+
+@pytest.mark.parametrize("algorithm", ["dfs", "prim"])
+def test_randomized_endpoints_are_valid(algorithm):
+    from app.game.solver import is_solvable
+
+    for seed in range(10):
+        maze = generate(15, 15, seed=seed, algorithm=algorithm, randomize_endpoints=True)
+        assert maze.is_floor(*maze.start)
+        assert maze.is_floor(*maze.goal)
+        assert maze.start != maze.goal
+        assert is_solvable(maze)
+
+
+def test_randomized_endpoints_are_deterministic():
+    a = generate(15, 15, seed=5, randomize_endpoints=True)
+    b = generate(15, 15, seed=5, randomize_endpoints=True)
+    assert a.start == b.start
+    assert a.goal == b.goal
+
+
+def test_randomized_endpoints_vary_across_seeds():
+    starts = {generate(15, 15, seed=s, randomize_endpoints=True).start for s in range(30)}
+    goals = {generate(15, 15, seed=s, randomize_endpoints=True).goal for s in range(30)}
+    assert len(starts) > 3, "시작점이 거의 변하지 않음"
+    assert len(goals) > 3, "목적지가 거의 변하지 않음"
+
+
+def test_fixed_endpoints_are_default():
+    maze = generate(15, 15, seed=1)
+    assert maze.start == (1, 1)
+    assert maze.goal == (13, 13)
