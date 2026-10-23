@@ -398,7 +398,8 @@ LoraConfig(
 | torch | 2.14.1**+cpu** | ⚠️ **CUDA 없음** |
 | transformers | 5.20.1 | ✅ |
 | HuggingFace | **접근 가능** | ✅ `prajjwal1/bert-tiny` 다운로드·캐시 완료 (1.7s) |
-| fastapi / uvicorn / pydantic | **미설치** | W1에서 설치 |
+| fastapi / uvicorn / pydantic | **미설치** | W3에서 설치 (W1은 불필요) |
+| pytest | 9.x 설치 완료 | ✅ 74 tests |
 | peft | **미설치** | → LoRA **직접 구현** 확정 (§4.2) |
 | git | 2.52.0 | ✅ `main` 브랜치 초기화 완료 |
 
@@ -439,15 +440,22 @@ LoraConfig(
 | 1 | §13 의사결정 확정 | ✅ 완료 |
 | 2 | `git init` + `.gitignore` | ✅ 완료 |
 | 3 | 환경 검증 (HF 접근, 모델 config) | ✅ 완료 |
-| 4 | 디렉터리 스캐폴딩 + `requirements.txt` | ⬜ 다음 |
-| 5 | `game/maze.py` — 시드 기반 생성기 (DFS + Prim) | ⬜ |
-| 6 | `game/solver.py` — BFS 라벨러 | ⬜ |
-| 7 | `game/env.py` — 관측 인코더 (29차원) + 이동/승리 판정 | ⬜ |
-| 8 | `training/gen_dataset.py` — 합성 데이터 병렬 생성 | ⬜ |
+| 4 | 디렉터리 스캐폴딩 + `requirements.txt` | ✅ 완료 |
+| 5 | `game/maze.py` — 시드 기반 생성기 (DFS + Prim) | ✅ 완료 |
+| 6 | `game/solver.py` — BFS 라벨러 | ✅ 완료 |
+| 7 | `game/env.py` — 관측 인코더 (29차원) + 이동/승리 판정 | ✅ 완료 |
+| 8 | `training/gen_dataset.py` — 합성 데이터 병렬 생성 | ⬜ 다음 |
 | 9 | 9×9 · 1만 스텝 **스모크 학습** → 파이프라인 검증 | ⬜ |
 | 10 | 본 계획서 v3 갱신 | ⬜ |
 
-> 다음 커밋 단위: 4~7을 하나로 묶어 `feat: 미로 생성·솔버·관측 인코더 구현`.
+**W1 코어 검증 결과** (`pytest`: 74 passed, 0.54s)
+
+- 15×15 seed `0x0000002a` → 최단 경로 **68스텝**, 최적 경로 롤아웃 시 `win=True`, `invalid=0`
+- 관측 차원: `window=3` → **29**, `window=5` → **61**
+- 검증 항목: 미로 불변식(외곽 벽·완전 연결), 시드 재현성, 최단 경로 정합성,
+  `observe()` ≡ `pack_payload()` 비트 일치, 벽 충돌 무이동, 승리 판정, 최대 스텝 종료
+
+> 다음 커밋 단위: 8 → `feat: 합성 데이터셋 생성기 (DAgger식 라벨링)`
 
 ---
 
