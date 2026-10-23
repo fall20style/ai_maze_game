@@ -27,6 +27,22 @@ cd server
 python -m pip install -r requirements.txt
 ```
 
+### 한 번에 실행 (테스트 런처)
+
+```powershell
+# 저장소 루트에서
+python test_launcher.py                       # 서버 + AI 클라이언트
+python test_launcher.py --brain rule          # 규칙: 왼손 법칙
+python test_launcher.py --brain human         # 사람
+```
+
+- 서버를 먼저 띄우고 `/health` 가 응답하면 클라이언트를 실행합니다.
+- 포트가 사용 중이면 빈 포트로 자동 이동합니다 (`--port 0` 은 항상 자동).
+- 클라이언트 창을 닫으면 서버도 함께 종료됩니다. Ctrl+C 로도 정리됩니다.
+- 알 수 없는 인자는 그대로 `viewer.app` 으로 전달됩니다 (`--size`, `--seed`, `--snapshot` …).
+- `--no-server --url http://127.0.0.1:8000` 은 이미 떠 있는 서버에 연결,
+  `--no-client` 는 서버만 실행합니다.
+
 ### 터미널 1 — 서버
 
 ```powershell
@@ -129,6 +145,7 @@ python -m training.compare_brains --mazes 60 --size 15
 ## 구조
 
 ```
+test_launcher.py       # 서버 + 클라이언트 동시 실행
 server/
 ├── app/
 │   ├── api/           # FastAPI 서버 — 게임의 유일한 권위
@@ -145,7 +162,7 @@ server/
 │   ├── remote.py      #   서버 JSON → 화면 상태
 │   ├── render.py      #   그리기 전용
 │   └── layout.py      #   순수 레이아웃 계산 (pygame 비의존)
-└── tests/             # 147 tests
+└── tests/             # 152 tests
 ```
 
 ## 테스트

@@ -766,6 +766,16 @@ braided 50/100% 에서도 120/120 동률, 운동 노이즈 20% 에서도 **55/60
 
 #### 6) 실행
 
+가장 간단한 방법은 저장소 루트의 런처다 (서버 준비 대기 → 클라이언트 실행 → 종료 시 정리).
+
+```powershell
+python test_launcher.py                 # AI
+python test_launcher.py --brain rule    # 규칙(왼손 법칙)
+python test_launcher.py --brain human   # 사람
+```
+
+터미널을 나누려면:
+
 ```powershell
 # 터미널 1 — 서버
 cd server
