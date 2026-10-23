@@ -10,7 +10,8 @@
 ```
 
 - **뷰어에는 경로 탐색 코드가 없습니다.** 이동은 `Brain` 이 돌려준 행동을 그대로 적용할 뿐입니다.
-- 학습 라벨(BFS 최단 행동)은 `training/` 에서만 쓰이고, 서빙 경로에서는 로드되지 않습니다.
+- 학습 라벨(왼손 법칙 전문가)은 `training/` 에서만 쓰이고, 서빙 경로에서는 로드되지 않습니다.
+- BFS 는 **평가 지표(최단 경로·optimality) 전용**이며, 학습 라벨로는 쓰지 않습니다.
 
 ## 빠른 시작
 
@@ -25,11 +26,11 @@ python -m pip install -r requirements.txt
 python -m viewer.app --size 15
 ```
 
-체크포인트를 생략하면 `checkpoints/v3/best.pt` → 가장 최근 `*/best.pt` 순으로
-자동 선택해 **AI가 스스로 플레이**합니다. 특정 모델을 쓰려면:
+체크포인트를 생략하면 `checkpoints/wall/best.pt` → `checkpoints/v3/best.pt` → 가장 최근
+`*/best.pt` 순으로 자동 선택해 **AI가 스스로 플레이**합니다. 특정 모델을 쓰려면:
 
 ```powershell
-python -m viewer.app --checkpoint checkpoints/smoke4/best.pt --size 15
+python -m viewer.app --checkpoint checkpoints/wall/best.pt --size 15
 ```
 
 - `--step-interval 0.05` 더 빠르게, `--step-interval 0.3` 천천히
@@ -63,14 +64,14 @@ python -m viewer.app --snapshot shot.png --snapshot-frame 120
 ```powershell
 cd server
 
-# 1) 합성 데이터셋 (미로 단위 8:1:1 분할)
-python -m training.gen_dataset --mazes 400 --sizes 9,11,13,15 --out data/v3 --workers 4
+# 1) 합성 데이터셋 — 왼손 법칙 전문가 라벨 (미로 단위 8:1:1 분할)
+python -m training.gen_dataset --mazes 240 --sizes 9,11,13,15 --out data/wall --workers 4
 
 # 2) LoRA-BERT 학습
-python -m training.train --data data/v3 --epochs 5 --out checkpoints/v3 --lora-r 32
+python -m training.train --data data/wall --epochs 4 --out checkpoints/wall --lora-r 32 --lora-lr 3e-4
 
 # 3) 롤아웃 평가 (정확도가 아니라 실제 탈출 성공률)
-python -m training.evaluate --checkpoint checkpoints/v3/best.pt --data data/v3 --limit 40
+python -m training.evaluate --checkpoint checkpoints/wall/best.pt --data data/wall --limit 40
 ```
 
 ## 구조
@@ -78,11 +79,11 @@ python -m training.evaluate --checkpoint checkpoints/v3/best.pt --data data/v3 -
 ```
 server/
 ├── app/
-│   ├── game/          # 미로 생성, 환경, 관측 인코더, (학습 전용) BFS 라벨러
+│   ├── game/          # 미로 생성, 환경, 관측 인코더, 왼손 법칙 전문가, (평가 전용) BFS
 │   └── ml/            # LoRA, BERT 정책, 슬라이딩 윈도우 실행기
 ├── training/          # 데이터 생성, 학습, 평가, DAgger
 ├── viewer/            # SDL(pygame) 뷰어 — 렌더링 + Brain 인터페이스
-└── tests/             # 99 tests
+└── tests/             # 107 tests
 ```
 
 ### 뷰어 설계
@@ -99,7 +100,15 @@ FastAPI 서버가 준비되면 `HttpBrain` 을 추가하고 `viewer/app.py` 는 
 
 ## 현재 상태
 
-- 데이터·학습·평가·뷰어 파이프라인은 동작합니다.
-- 정책 성능은 아직 목표(15×15 ≥80%)에 못 미칩니다. 원인 분석과 개선 계획은
-  [`PLAN.md`](./PLAN.md) §14 참고.
+- 데이터·학습·평가·뷰어 파이프라인이 모두 동작합니다.
+- `checkpoints/wall` (왼손 법칙 전문가 라벨, LoRA r=32) 은 **롤아웃 성공률 100%** 입니다.
+
+  | 평가셋 | 미로 | 성공률 | 평균 스텝 | optimality |
+  |---|---|---|---|---|
+  | 9~15 test | 24 | 100% | 65.8 | 2.28 |
+  | 15×15 test | 20 | 100% | 93.2 | 2.92 |
+  | 17·19 test (미학습 크기) | 6 | 100% | 185.0 | 4.84 |
+
+- 성공률을 위해 **효율을 희생**했습니다. 왼손 법칙은 최단 경로의 2~5배를 걷습니다.
+  효율 개선은 후속 과제이며 자세한 분석은 [`PLAN.md`](./PLAN.md) §14 W2.6 참고.
 - FastAPI 서빙(W3)은 아직 없습니다. 뷰어는 현재 로컬 체크포인트를 사용합니다.

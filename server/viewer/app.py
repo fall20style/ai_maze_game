@@ -136,12 +136,13 @@ class Session:
 def _discover_checkpoint(server_root: Path) -> str | None:
     """``--checkpoint`` 생략 시 사용할 체크포인트.
 
-    문서화된 기본 모델(``checkpoints/v3/best.pt``)을 우선하고, 없으면
-    가장 최근에 만든 체크포인트를 쓴다.
+    왼손 법칙 전문가로 학습한 ``checkpoints/wall`` 을 우선하고, 없으면
+    문서화된 기본 모델(``checkpoints/v3``), 마지막으로 가장 최근 체크포인트를 쓴다.
     """
-    preferred = server_root / "checkpoints" / "v3" / "best.pt"
-    if preferred.exists():
-        return str(preferred)
+    for name in ("wall", "v3"):
+        preferred = server_root / "checkpoints" / name / "best.pt"
+        if preferred.exists():
+            return str(preferred)
 
     candidates = sorted(
         (server_root / "checkpoints").glob("*/best.pt"),
