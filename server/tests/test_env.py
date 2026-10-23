@@ -1,0 +1,178 @@
+import numpy as np
+import pytest
+
+from app.game.actions import Action, NO_ACTION_INDEX
+from app.game.env import (
+    FLOOR_CELL,
+    UNKNOWN,
+    WALL_CELL,
+    MazeEnv,
+    observation_dim,
+    pack_payload,
+)
+from app.game.maze import generate
+from app.game.solver import bfs_path, path_actions
+
+
+@pytest.fixture
+def maze():
+    return generate(15, 15, seed=42)
+
+
+@pytest.fixture
+def env(maze):
+    return MazeEnv(maze, window_size=3)
+
+
+def test_observation_dim_formula():
+    assert observation_dim(3) == 29
+    assert observation_dim(5) == 61
+    assert observation_dim(7) == 109
+
+
+def test_observation_shape_and_dtype(env):
+    obs = env.observe()
+    assert obs.shape == (29,)
+    assert obs.dtype == np.float32
+    assert np.isfinite(obs).all()
+
+
+def test_pack_payload_matches_observe(env):
+    """학습 경로와 서빙 경로가 **정확히** 같은 벡터를 만들어야 한다 (R-3 방지)."""
+    for _ in range(10):
+        payload = env.observe_payload()
+        assert np.array_equal(pack_payload(payload, 3), env.observe())
+        result = env.step(Action.DOWN)
+        if result.done:
+            break
+
+
+def test_pack_payload_rejects_bad_shape(env):
+    payload = env.observe_payload()
+    payload["local"] = [[0, 0], [0, 0]]
+    with pytest.raises(ValueError):
+        pack_payload(payload, 3)
+
+
+def test_pack_payload_rejects_bad_last_action(env):
+    payload = env.observe_payload()
+    payload["last_action"] = 99
+    with pytest.raises(ValueError):
+        pack_payload(payload, 3)
+
+
+def test_initial_state(env, maze):
+    assert env.position == maze.start
+    assert env.visited == {maze.start}
+    assert env.last_action == NO_ACTION_INDEX
+    assert env.step_count == 0
+    assert not env.won
+
+
+def test_center_of_window_is_current_cell(env, maze):
+    obs = env.observe()
+    local = obs[2:11].reshape(3, 3)
+    x, y = env.position
+    expected = WALL_CELL if maze.is_wall(x, y) else FLOOR_CELL
+    assert local[1, 1] == expected
+
+
+def test_wall_collision_does_not_move(env, maze):
+    # 시작점 (1,1)에서 위로 가면 외곽 벽
+    result = env.step(Action.UP)
+    assert result.hit_wall is True
+    assert result.moved is False
+    assert env.position == maze.start
+    assert env.invalid_actions == 1
+    assert result.step == 1
+
+
+def test_last_action_onehot_after_step(env):
+    result = env.step(Action.DOWN)
+    obs = result.observation
+    last_action = obs[-6:-1]
+    assert last_action.sum() == pytest.approx(1.0)
+    assert last_action[int(Action.DOWN)] == 1.0
+
+
+def test_visited_window_marks_start(env):
+    obs = env.observe()
+    visited = obs[11:20].reshape(3, 3)
+    assert visited[1, 1] == 1.0
+
+
+def test_walking_optimal_path_wins(env, maze):
+    path = bfs_path(maze, maze.start, maze.goal)
+    assert path is not None
+
+    result = None
+    for action in path_actions(path):
+        result = env.step(action)
+
+    assert result is not None
+    assert result.win is True
+    assert result.done is True
+    assert env.position == maze.goal
+    assert env.step_count == len(path) - 1
+    assert env.invalid_actions == 0
+
+
+def test_progress_component(env):
+    assert env.observe()[-1] == pytest.approx(0.0)
+    env.step(Action.DOWN)
+    expected = 1 / env.max_steps
+    assert env.observe()[-1] == pytest.approx(expected)
+
+
+def test_max_steps_terminates(maze):
+    env = MazeEnv(maze, window_size=3, max_steps=3)
+    for i in range(3):
+        result = env.step(Action.DOWN)
+    assert result.done is True
+    assert result.step == 3
+
+
+def test_step_after_done_raises(maze):
+    env = MazeEnv(maze, window_size=3, max_steps=1)
+    env.step(Action.DOWN)
+    with pytest.raises(RuntimeError):
+        env.step(Action.DOWN)
+
+
+def test_reset_restores_state(env, maze):
+    env.step(Action.DOWN)
+    env.step(Action.RIGHT)
+    env.reset()
+    assert env.position == maze.start
+    assert env.step_count == 0
+    assert env.visited == {maze.start}
+    assert env.last_action == NO_ACTION_INDEX
+
+
+def test_out_of_bounds_window_is_wall(maze):
+    env = MazeEnv(maze, window_size=5)
+    env.position = (1, 1)  # 좌상단 구석
+    obs = env.observe()
+    local = obs[2 : 2 + 25].reshape(5, 5)
+    assert local[0, 0] == WALL_CELL
+    assert local[0, 4] == WALL_CELL
+
+
+def test_unknown_cells_when_maze_is_not_fully_known(maze):
+    env = MazeEnv(maze, window_size=3, knows_full_maze=False)
+    obs = env.observe()
+    local = obs[2:11].reshape(3, 3)
+    # 시작점 주변은 아직 방문하지 않았으므로 UNKNOWN
+    assert (local == UNKNOWN).sum() >= 1
+
+
+def test_invalid_window_size(maze):
+    with pytest.raises(ValueError):
+        MazeEnv(maze, window_size=4)
+
+
+def test_observation_bounds(env):
+    """모든 성분이 [-1, 1] 범위를 벗어나지 않아야 한다."""
+    obs = env.observe()
+    assert obs.min() >= -1.0
+    assert obs.max() <= 2.0  # 셀 코드가 2(floor)까지 사용됨
