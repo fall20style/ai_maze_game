@@ -25,14 +25,16 @@ def env(maze):
 
 
 def test_observation_dim_formula():
-    assert observation_dim(3) == 29
-    assert observation_dim(5) == 61
-    assert observation_dim(7) == 109
+    assert observation_dim(3, 5) == 54
+    assert observation_dim(5, 5) == 86
+    assert observation_dim(7, 5) == 134
+    # 전역 요약 비활성 시 기존 차원
+    assert observation_dim(3, 0) == 29
 
 
 def test_observation_shape_and_dtype(env):
     obs = env.observe()
-    assert obs.shape == (29,)
+    assert obs.shape == (env.obs_dim,)
     assert obs.dtype == np.float32
     assert np.isfinite(obs).all()
 
@@ -41,7 +43,7 @@ def test_pack_payload_matches_observe(env):
     """학습 경로와 서빙 경로가 **정확히** 같은 벡터를 만들어야 한다 (R-3 방지)."""
     for _ in range(10):
         payload = env.observe_payload()
-        assert np.array_equal(pack_payload(payload, 3), env.observe())
+        assert np.array_equal(pack_payload(payload, 3, 5), env.observe())
         result = env.step(Action.DOWN)
         if result.done:
             break
@@ -51,14 +53,14 @@ def test_pack_payload_rejects_bad_shape(env):
     payload = env.observe_payload()
     payload["local"] = [[0, 0], [0, 0]]
     with pytest.raises(ValueError):
-        pack_payload(payload, 3)
+        pack_payload(payload, 3, 5)
 
 
 def test_pack_payload_rejects_bad_last_action(env):
     payload = env.observe_payload()
     payload["last_action"] = 99
     with pytest.raises(ValueError):
-        pack_payload(payload, 3)
+        pack_payload(payload, 3, 5)
 
 
 def test_initial_state(env, maze):
@@ -176,3 +178,41 @@ def test_observation_bounds(env):
     obs = env.observe()
     assert obs.min() >= -1.0
     assert obs.max() <= 2.0  # 셀 코드가 2(floor)까지 사용됨
+
+
+# --------------------------------------------------------------- 전역 방문 요약
+def test_global_visited_marks_only_start_block(env, maze):
+    obs = env.observe()
+    glob = obs[20 : 20 + 25].reshape(5, 5)
+    assert glob.sum() == 1.0
+
+    x, y = maze.start
+    assert glob[y * 5 // maze.height, x * 5 // maze.width] == 1.0
+
+
+def test_global_visited_grows_with_movement(env):
+    before = env.observe()[20 : 20 + 25].sum()
+    for _ in range(5):
+        env.step(Action.DOWN)
+    after = env.observe()[20 : 20 + 25].sum()
+    assert after >= before
+
+
+def test_global_summary_can_be_disabled(maze):
+    env = MazeEnv(maze, window_size=3, global_size=0)
+    assert env.obs_dim == 29
+    payload = env.observe_payload()
+    assert payload["global"] == []
+    assert np.array_equal(pack_payload(payload, 3, 0), env.observe())
+
+
+def test_pack_payload_requires_global_when_enabled(env):
+    payload = env.observe_payload()
+    del payload["global"]
+    with pytest.raises(ValueError):
+        pack_payload(payload, 3, 5)
+
+
+def test_global_size_validation(maze):
+    with pytest.raises(ValueError):
+        MazeEnv(maze, global_size=4)

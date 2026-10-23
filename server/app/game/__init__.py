@@ -11,6 +11,7 @@ from .actions import (
     apply_action,
 )
 from .env import (
+    ALLOWED_GLOBAL_SIZES,
     ALLOWED_WINDOW_SIZES,
     FLOOR_CELL,
     UNKNOWN,
@@ -26,6 +27,7 @@ from .solver import bfs_path, best_action, distance_map, is_solvable, path_actio
 
 __all__ = [
     "ACTION_NAMES",
+    "ALLOWED_GLOBAL_SIZES",
     "ALLOWED_WINDOW_SIZES",
     "DELTAS",
     "FLOOR",

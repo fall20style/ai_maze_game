@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
@@ -49,10 +50,14 @@ class DatasetConfig:
     mazes: int = 1000
     sizes: tuple[int, ...] = DEFAULT_SIZES
     window_size: int = 3
+    global_size: int = 5
     base_seed: int = 0
-    random_episodes: int = 1
+    random_episodes: int = 2
     max_episode_steps: int = 512
     randomize_endpoints: bool = True
+    #: 무작위 탐색 중 "이미 방문한 칸"으로 되돌아갈 확률.
+    #: 0 이면 방문 회피만 하므로, 모델이 되돌아가는 상황을 학습에서 거의 보지 못한다.
+    explore_revisit_prob: float = 0.35
     out_dir: str = "data"
 
     def to_json(self) -> dict:
@@ -103,7 +108,7 @@ def build_maze_samples(index: int, cfg: DatasetConfig) -> MazeSamples:
     steps: list[int] = []
 
     # ---------------------------------------------------------- 1) 최단 궤적
-    env = MazeEnv(maze, window_size=cfg.window_size, max_steps=max(1, shortest))
+    env = MazeEnv(maze, window_size=cfg.window_size, global_size=cfg.global_size, max_steps=max(1, shortest))
     obs = env.reset()
     t = 0
     while True:
@@ -123,8 +128,9 @@ def build_maze_samples(index: int, cfg: DatasetConfig) -> MazeSamples:
 
     # ---------------------------------------------------------- 2) 무작위 탐색
     random_cap = min(cfg.max_episode_steps, max(32, 2 * shortest))
+    explore_rng = random.Random(seed ^ 0x5BF03635)
     for _ in range(cfg.random_episodes):
-        env = MazeEnv(maze, window_size=cfg.window_size, max_steps=random_cap)
+        env = MazeEnv(maze, window_size=cfg.window_size, global_size=cfg.global_size, max_steps=random_cap)
         obs = env.reset()
         t = 0
         while True:
@@ -136,7 +142,7 @@ def build_maze_samples(index: int, cfg: DatasetConfig) -> MazeSamples:
             kinds.append(1)
             steps.append(t)
 
-            action = _explore_action(maze, env)
+            action = _explore_action(maze, env, explore_rng, cfg.explore_revisit_prob)
             result = env.step(action)
             obs = result.observation
             t += 1
@@ -155,11 +161,20 @@ def build_maze_samples(index: int, cfg: DatasetConfig) -> MazeSamples:
     )
 
 
-def _explore_action(maze, env: MazeEnv) -> Action:
-    """방문하지 않은 이웃을 우선하는 무작위 탐색 정책.
+def _explore_action(
+    maze,
+    env: MazeEnv,
+    rng: random.Random,
+    revisit_prob: float = 0.35,
+) -> Action:
+    """무작위 탐색 정책.
 
-    경고: 목표 방향을 전혀 고려하지 않는다. 순수하게 "덜 가본 곳"으로만 간다.
-    따라서 라벨(최적 행동)과 실제 행동이 자주 어긋나며, 이것이 의도된 것이다.
+    기본은 "덜 가본 곳" 우선이지만, ``revisit_prob`` 확률로 이미 방문한 칸도
+    선택한다. 이렇게 해야 모델이 **되돌아가는 상황**을 학습 데이터에서 보게 된다.
+    (방문 회피만 하면 추론 시 발생하는 루프 상태가 학습 분포 밖이 된다.)
+
+    경고: 목표 방향을 전혀 고려하지 않는다. 따라서 라벨(최적 행동)과 실제 행동이
+    자주 어긋나며, 이것이 의도된 것이다.
     """
     x, y = env.position
     unvisited: list[Action] = []
@@ -173,11 +188,15 @@ def _explore_action(maze, env: MazeEnv) -> Action:
         if (nx, ny) not in env.visited:
             unvisited.append(action)
 
-    pool = unvisited or all_moves
-    if not pool:  # 고립된 칸 (발생 불가)
+    if not all_moves:  # 고립된 칸 (발생 불가)
         return Action.UP
-    # 결정적이지만 미로마다 다른 선택을 위해 위치를 해시해 인덱스로 쓴다
-    return pool[(x * 31 + y * 17 + env.step_count * 7) % len(pool)]
+
+    if rng.random() < revisit_prob:
+        pool = all_moves
+    else:
+        pool = unvisited or all_moves
+
+    return pool[rng.randrange(len(pool))]
 
 
 def _concat(batches: Sequence[MazeSamples]) -> dict[str, np.ndarray]:
@@ -258,8 +277,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--mazes", type=int, default=1000, help="생성할 미로 수")
     p.add_argument("--sizes", type=str, default=",".join(map(str, DEFAULT_SIZES)))
     p.add_argument("--window-size", type=int, default=3, choices=(3, 5, 7))
+    p.add_argument(
+        "--global-size",
+        type=int,
+        default=5,
+        choices=(0, 3, 5, 7, 9),
+        help="전역 방문 요약 격자 크기 (0 = 비활성)",
+    )
     p.add_argument("--base-seed", type=int, default=0)
-    p.add_argument("--random-episodes", type=int, default=1)
+    p.add_argument("--random-episodes", type=int, default=2)
+    p.add_argument(
+        "--explore-revisit-prob",
+        type=float,
+        default=0.35,
+        help="무작위 탐색이 이미 방문한 칸으로 되돌아갈 확률",
+    )
     p.add_argument("--max-episode-steps", type=int, default=512)
     p.add_argument(
         "--no-randomize-endpoints",
@@ -279,10 +311,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         mazes=args.mazes,
         sizes=sizes,
         window_size=args.window_size,
+        global_size=args.global_size,
         base_seed=args.base_seed,
         random_episodes=args.random_episodes,
         max_episode_steps=args.max_episode_steps,
         randomize_endpoints=args.randomize_endpoints,
+        explore_revisit_prob=args.explore_revisit_prob,
         out_dir=args.out,
     )
     summary = generate_dataset(cfg, workers=args.workers)

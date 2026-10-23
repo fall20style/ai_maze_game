@@ -29,7 +29,7 @@ def test_sample_shapes_are_aligned(cfg):
     batch = build_maze_samples(0, cfg)
     n = len(batch.action)
     assert n > 0
-    assert batch.obs.shape == (n, observation_dim(cfg.window_size))
+    assert batch.obs.shape == (n, observation_dim(cfg.window_size, cfg.global_size))
     assert batch.seed.shape == batch.action.shape
     assert batch.kind.shape == batch.action.shape
     assert batch.algo.shape == batch.action.shape
@@ -193,7 +193,7 @@ def test_generate_dataset_writes_files(cfg, tmp_path):
     assert summary["splits"]["train"]["mazes"] == 8
 
     data = np.load(tmp_path / "out" / "train.npz")
-    assert data["obs"].shape[1] == observation_dim(3)
+    assert data["obs"].shape[1] == observation_dim(3, 5)
     assert set(np.unique(data["action"])) <= {0, 1, 2, 3}
 
 
