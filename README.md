@@ -20,6 +20,15 @@
 
 ![규칙 구현체(frontier)로 플레이 중인 클라이언트](docs/screenshot-rule.png)
 
+## 문서
+
+| 문서 | 내용 |
+|---|---|
+| [설계 문서](docs/DESIGN.md) | 아키텍처, 관측/API 계약, R1~R4, 동시성, 테스트 전략 |
+| [빌드/실행 안내](docs/BUILD.md) | 설치, 런처/두 터미널 실행, 학습 파이프라인, 문제 해결 |
+| [의사결정 기록](docs/DECISIONS.md) | 시간순 ADR — 왜 지금 이런 구조인가 (실패 포함) |
+| [계획/실험 로그](PLAN.md) | 마일스톤과 실측 원본 |
+
 ## 빠른 시작
 
 ```powershell
@@ -146,6 +155,11 @@ python -m training.compare_brains --mazes 60 --size 15
 
 ```
 test_launcher.py       # 서버 + 클라이언트 동시 실행
+docs/
+├── DESIGN.md          # SW 설계 문서
+├── BUILD.md           # 빌드/실행 안내
+├── DECISIONS.md       # 의사결정 기록
+└── screenshot-rule.png
 server/
 ├── app/
 │   ├── api/           # FastAPI 서버 — 게임의 유일한 권위
