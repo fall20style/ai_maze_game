@@ -1,26 +1,31 @@
-"""합성 데이터셋 생성기 (W1).
+"""합성 데이터셋 생성기.
 
 전략
 ----
 1. 미로를 무작위로 생성한다 (DFS / Prim 혼합, 크기 9~21).
-2. 목표에서 BFS 거리맵을 **한 번** 계산한다.
-3. 두 종류의 궤적을 섞어 샘플을 뽑는다.
+2. **왼손 법칙(wall follower)** 전문가로 궤적을 만든다.
+3. 모든 상태의 라벨은 "그 상태에서 전문가가 고를 행동"이다.
 
-   - ``optimal`` : 최단 경로를 그대로 따라간다 (정상 궤적)
-   - ``random``  : 방문 칸을 피하는 무작위 탐색 (실수·막다른 길 포함)
+왜 BFS 최단 행동이 아니라 왼손 법칙인가
+--------------------------------------
+BFS 최단 행동은 **전체 미로를 아는** 전문가의 라벨이다. 3×3 창 + 압축 방문 요약만
+가진 정책에게는 관측으로 결정되지 않는(unidentifiable) 목표이므로, 모델은
+"목표 쪽으로 직진"하는 근시안 정책을 배우고 벽/막다른 길에서 진동한다
+(실측: 단일 스텝 정확도 76%, 롤아웃 성공률 27%).
 
-4. **모든 상태의 라벨은 "현재 칸에서 목표로 가는 최단 경로의 첫 스텝"** 이다.
+왼손 법칙은 (현재 칸의 3×3 벽/바닥, 직전 이동 방향)만으로 결정된다.
+즉 **관측의 함수**이고, 완벽 미로에서는 목표에 반드시 도달한다.
+대가는 비효율(최단 경로의 2~4배)이다. 성공률을 우선한다.
 
-왜 최단 경로만 쓰면 안 되는가
------------------------------
-정상 궤적만 학습하면 모델은 "한 번도 실수하지 않은 상태"만 보게 된다.
-실제 추론에서는 모델이 스스로 실수하며 분포 밖 상태로 들어가고, 그때 복구 행동을
-배운 적이 없으므로 그대로 헤맨다. 무작위 탐색 궤적에 최적 라벨을 붙이는 것은
-DAgger(Ross et al., 2011)의 축소판이다.
+두 종류의 궤적
+--------------
+- ``expert`` (kind=0): 노이즈 없이 전문가를 그대로 따라간다.
+- ``noisy``  (kind=1): ``noise_prob`` 확률로 다른 합법 수를 골라 분포를 넓힌다.
+  라벨은 여전히 **그 상태에서의 전문가 행동**이므로, "실수 후 복구"를 정확히 가르친다.
 
 사용
 ----
-    python -m training.gen_dataset --mazes 200 --sizes 9,11,13 --out data/smoke
+    python -m training.gen_dataset --mazes 200 --sizes 9,11,13,15 --out data/wall
 """
 
 from __future__ import annotations
@@ -38,8 +43,8 @@ import numpy as np
 
 from app.game.actions import DELTAS, Action
 from app.game.env import MazeEnv
+from app.game.expert import wall_follow_action
 from app.game.maze import generate
-from app.game.solver import best_action, bfs_path, distance_map
 
 DEFAULT_SIZES: tuple[int, ...] = (9, 11, 13, 15, 17, 19, 21)
 ALGORITHMS: tuple[str, ...] = ("dfs", "prim")
@@ -52,12 +57,14 @@ class DatasetConfig:
     window_size: int = 3
     global_size: int = 5
     base_seed: int = 0
-    random_episodes: int = 2
-    max_episode_steps: int = 512
+    #: 노이즈 없는 전문가 궤적 수
+    expert_episodes: int = 1
+    #: 무작위 이탈을 섞은 궤적 수 (실수 복구 학습)
+    noisy_episodes: int = 1
+    #: noisy 궤적에서 전문가 대신 다른 수를 고를 확률
+    noise_prob: float = 0.05
+    max_episode_steps: int = 1024
     randomize_endpoints: bool = True
-    #: 무작위 탐색 중 "이미 방문한 칸"으로 되돌아갈 확률.
-    #: 0 이면 방문 회피만 하므로, 모델이 되돌아가는 상황을 학습에서 거의 보지 못한다.
-    explore_revisit_prob: float = 0.35
     out_dir: str = "data"
 
     def to_json(self) -> dict:
@@ -72,7 +79,7 @@ class MazeSamples:
     action: np.ndarray
     seed: np.ndarray
     size: np.ndarray
-    kind: np.ndarray  # 0=optimal, 1=random
+    kind: np.ndarray  # 0=expert, 1=noisy
     step: np.ndarray
     algo: np.ndarray  # 0=dfs, 1=prim
 
@@ -85,6 +92,64 @@ def _maze_params(index: int, cfg: DatasetConfig) -> tuple[int, int, int, str]:
     return size, size, seed, algorithm
 
 
+def _random_legal_action(
+    maze,
+    pos: tuple[int, int],
+    rng: random.Random,
+    avoid: Action | None = None,
+) -> Action:
+    """벽이 아닌 이웃 중 하나를 고른다. ``avoid`` 는 가능하면 제외한다."""
+    x, y = pos
+    options = [
+        action
+        for action, (dx, dy) in DELTAS.items()
+        if not maze.is_wall(x + dx, y + dy)
+    ]
+    if avoid is not None and len(options) > 1:
+        options = [action for action in options if action != avoid]
+    return options[rng.randrange(len(options))]
+
+
+def _rollout(
+    maze,
+    cfg: DatasetConfig,
+    rng: random.Random,
+    noise_prob: float,
+    kind: int,
+    obs_list: list[np.ndarray],
+    action_list: list[int],
+    kinds: list[int],
+    steps: list[int],
+) -> None:
+    """전문가 롤아웃 하나를 돌며 (관측, 전문가 행동) 쌍을 모은다."""
+    env = MazeEnv(
+        maze,
+        window_size=cfg.window_size,
+        global_size=cfg.global_size,
+        max_steps=cfg.max_episode_steps,
+    )
+    obs = env.reset()
+    t = 0
+
+    while not env.done:
+        label = wall_follow_action(maze, env.position, env.last_action)
+        obs_list.append(obs)
+        action_list.append(int(label))
+        kinds.append(kind)
+        steps.append(t)
+
+        if noise_prob > 0 and rng.random() < noise_prob:
+            action = _random_legal_action(maze, env.position, rng, avoid=label)
+        else:
+            action = label
+
+        result = env.step(action)
+        obs = result.observation
+        t += 1
+        if result.done:
+            break
+
+
 def build_maze_samples(index: int, cfg: DatasetConfig) -> MazeSamples:
     """미로 하나에 대한 학습 샘플을 만든다 (워커 함수 — 반드시 모듈 레벨)."""
     width, height, seed, algorithm = _maze_params(index, cfg)
@@ -95,59 +160,21 @@ def build_maze_samples(index: int, cfg: DatasetConfig) -> MazeSamples:
         algorithm=algorithm,
         randomize_endpoints=cfg.randomize_endpoints,
     )
-    dist = distance_map(maze, maze.goal)
-
-    path = bfs_path(maze, maze.start, maze.goal)
-    if path is None:  # 완전 연결 미로에서는 발생하지 않지만 방어
-        raise RuntimeError(f"unsolvable maze: seed={seed}")
-    shortest = len(path) - 1
 
     obs_list: list[np.ndarray] = []
     action_list: list[int] = []
     kinds: list[int] = []
     steps: list[int] = []
+    rng = random.Random(seed ^ 0x9E3779B9)
 
-    # ---------------------------------------------------------- 1) 최단 궤적
-    env = MazeEnv(maze, window_size=cfg.window_size, global_size=cfg.global_size, max_steps=max(1, shortest))
-    obs = env.reset()
-    t = 0
-    while True:
-        label = best_action(maze, env.position, dist)
-        if label is None:
-            break
-        obs_list.append(obs)
-        action_list.append(int(label))
-        kinds.append(0)
-        steps.append(t)
-        # 최단 경로를 따르므로 라벨과 동일한 행동을 취한다
-        result = env.step(label)
-        obs = result.observation
-        t += 1
-        if result.done:
-            break
-
-    # ---------------------------------------------------------- 2) 무작위 탐색
-    random_cap = min(cfg.max_episode_steps, max(32, 2 * shortest))
-    explore_rng = random.Random(seed ^ 0x5BF03635)
-    for _ in range(cfg.random_episodes):
-        env = MazeEnv(maze, window_size=cfg.window_size, global_size=cfg.global_size, max_steps=random_cap)
-        obs = env.reset()
-        t = 0
-        while True:
-            label = best_action(maze, env.position, dist)
-            if label is None:
-                break
-            obs_list.append(obs)
-            action_list.append(int(label))
-            kinds.append(1)
-            steps.append(t)
-
-            action = _explore_action(maze, env, explore_rng, cfg.explore_revisit_prob)
-            result = env.step(action)
-            obs = result.observation
-            t += 1
-            if result.done:
-                break
+    for _ in range(cfg.expert_episodes):
+        _rollout(
+            maze, cfg, rng, 0.0, 0, obs_list, action_list, kinds, steps
+        )
+    for _ in range(cfg.noisy_episodes):
+        _rollout(
+            maze, cfg, rng, cfg.noise_prob, 1, obs_list, action_list, kinds, steps
+        )
 
     n = len(action_list)
     return MazeSamples(
@@ -159,44 +186,6 @@ def build_maze_samples(index: int, cfg: DatasetConfig) -> MazeSamples:
         step=np.asarray(steps, dtype=np.int16),
         algo=np.full(n, 0 if algorithm == "dfs" else 1, dtype=np.int8),
     )
-
-
-def _explore_action(
-    maze,
-    env: MazeEnv,
-    rng: random.Random,
-    revisit_prob: float = 0.35,
-) -> Action:
-    """무작위 탐색 정책.
-
-    기본은 "덜 가본 곳" 우선이지만, ``revisit_prob`` 확률로 이미 방문한 칸도
-    선택한다. 이렇게 해야 모델이 **되돌아가는 상황**을 학습 데이터에서 보게 된다.
-    (방문 회피만 하면 추론 시 발생하는 루프 상태가 학습 분포 밖이 된다.)
-
-    경고: 목표 방향을 전혀 고려하지 않는다. 따라서 라벨(최적 행동)과 실제 행동이
-    자주 어긋나며, 이것이 의도된 것이다.
-    """
-    x, y = env.position
-    unvisited: list[Action] = []
-    all_moves: list[Action] = []
-
-    for action, (dx, dy) in DELTAS.items():
-        nx, ny = x + dx, y + dy
-        if maze.is_wall(nx, ny):
-            continue
-        all_moves.append(action)
-        if (nx, ny) not in env.visited:
-            unvisited.append(action)
-
-    if not all_moves:  # 고립된 칸 (발생 불가)
-        return Action.UP
-
-    if rng.random() < revisit_prob:
-        pool = all_moves
-    else:
-        pool = unvisited or all_moves
-
-    return pool[rng.randrange(len(pool))]
 
 
 def _concat(batches: Sequence[MazeSamples]) -> dict[str, np.ndarray]:
@@ -262,13 +251,15 @@ def generate_dataset(cfg: DatasetConfig, workers: int = 1) -> dict[str, object]:
             "mazes": int(len(idx)),
             "action_counts": dict(zip(("UP", "DOWN", "LEFT", "RIGHT"), counts)),
             "kind_ratio": {
-                "optimal": round(float((part["kind"] == 0).mean()), 3),
-                "random": round(float((part["kind"] == 1).mean()), 3),
+                "expert": round(float((part["kind"] == 0).mean()), 3),
+                "noisy": round(float((part["kind"] == 1).mean()), 3),
             },
         }
 
     summary["elapsed_sec"] = round(time.time() - t0, 2)
-    (out / "meta.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (out / "meta.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return summary
 
 
@@ -285,14 +276,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="전역 방문 요약 격자 크기 (0 = 비활성)",
     )
     p.add_argument("--base-seed", type=int, default=0)
-    p.add_argument("--random-episodes", type=int, default=2)
+    p.add_argument("--expert-episodes", type=int, default=1)
+    p.add_argument("--noisy-episodes", type=int, default=1)
     p.add_argument(
-        "--explore-revisit-prob",
+        "--noise-prob",
         type=float,
-        default=0.35,
-        help="무작위 탐색이 이미 방문한 칸으로 되돌아갈 확률",
+        default=0.05,
+        help="noisy 궤적에서 전문가 대신 다른 수를 고를 확률",
     )
-    p.add_argument("--max-episode-steps", type=int, default=512)
+    p.add_argument("--max-episode-steps", type=int, default=1024)
     p.add_argument(
         "--no-randomize-endpoints",
         dest="randomize_endpoints",
@@ -313,10 +305,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         window_size=args.window_size,
         global_size=args.global_size,
         base_seed=args.base_seed,
-        random_episodes=args.random_episodes,
+        expert_episodes=args.expert_episodes,
+        noisy_episodes=args.noisy_episodes,
+        noise_prob=args.noise_prob,
         max_episode_steps=args.max_episode_steps,
         randomize_endpoints=args.randomize_endpoints,
-        explore_revisit_prob=args.explore_revisit_prob,
         out_dir=args.out,
     )
     summary = generate_dataset(cfg, workers=args.workers)
