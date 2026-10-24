@@ -54,6 +54,9 @@ class PolicyConfig:
     pretrained: str | None = DEFAULT_PRETRAINED
     train_layernorm: bool = True
     train_position_embeddings: bool = True
+    #: ``inputs_embeds`` 경로에서는 ``word_embeddings``가 호출되지 않는다.
+    #: True 면 1행 더미 임베딩으로 교체해 체크포인트 크기를 줄인다.
+    prune_word_embeddings: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -123,16 +126,11 @@ class BertPolicy(nn.Module):
 
         self.head = nn.Linear(cfg.hidden_size, cfg.num_actions)
 
-        self.stats = PolicyStats(
-            total=sum(p.numel() for p in self.parameters()),
-            trainable=sum(p.numel() for p in self.parameters() if p.requires_grad),
-            lora=sum(
-                p.numel()
-                for n, p in self.named_parameters()
-                if "lora_A" in n or "lora_B" in n
-            ),
-            lora_modules=n_lora,
-        )
+        self._lora_modules = n_lora
+        if cfg.prune_word_embeddings:
+            # 체크포인트를 만들 때와 같은 모양으로 먼저 줄여야 load_state_dict 가 맞는다
+            self.prune_word_embeddings()
+        self.refresh_stats()
 
     # ------------------------------------------------------------------ 순전파
     def forward(
@@ -159,6 +157,66 @@ class BertPolicy(nn.Module):
         return self.head(last)
 
     # ------------------------------------------------------------------ 유틸
+    def refresh_stats(self) -> PolicyStats:
+        """파라미터 구성이 바뀐 뒤(prune 등) 통계를 다시 계산한다."""
+        self.stats = PolicyStats(
+            total=sum(p.numel() for p in self.parameters()),
+            trainable=sum(p.numel() for p in self.parameters() if p.requires_grad),
+            lora=sum(
+                p.numel()
+                for n, p in self.named_parameters()
+                if "lora_A" in n or "lora_B" in n
+            ),
+            lora_modules=self._lora_modules,
+        )
+        return self.stats
+
+    def prune_word_embeddings(self) -> dict:
+        """쓰이지 않는 ``word_embeddings`` 를 1행짜리 0 임베딩으로 교체한다.
+
+        :meth:`forward` 는 항상 ``inputs_embeds`` 를 넘기므로 HF ``BertEmbeddings``
+        는 ``word_embeddings`` 를 호출하지 않는다. 따라서 30,522행 어휘표는
+        체크포인트 용량만 차지한다. 1행으로 줄여도 로짓은 **비트 단위로 동일**하다.
+
+        반환값은 절감 통계(dict). 이미 1행이면 아무것도 하지 않는다(멱등).
+        """
+        embeddings = self.encoder.embeddings
+        old = embeddings.word_embeddings
+        rows, dim = old.weight.shape
+        before = {
+            "rows": int(rows),
+            "dim": int(dim),
+            "params": int(old.weight.numel()),
+            "bytes": int(old.weight.numel() * old.weight.element_size()),
+        }
+
+        if rows != 1:
+            replacement = nn.Embedding(1, dim).to(
+                device=old.weight.device, dtype=old.weight.dtype
+            )
+            with torch.no_grad():
+                replacement.weight.zero_()
+            replacement.weight.requires_grad = False
+            embeddings.word_embeddings = replacement
+
+        self.cfg.prune_word_embeddings = True
+        self.refresh_stats()
+
+        new = embeddings.word_embeddings
+        after = {
+            "rows": int(new.weight.shape[0]),
+            "dim": int(new.weight.shape[1]),
+            "params": int(new.weight.numel()),
+            "bytes": int(new.weight.numel() * new.weight.element_size()),
+        }
+        return {
+            "before": before,
+            "after": after,
+            "saved_params": before["params"] - after["params"],
+            "saved_bytes": before["bytes"] - after["bytes"],
+            "already_pruned": rows == 1,
+        }
+
     def param_groups(self, base_lr: float, lora_lr: float, weight_decay: float = 0.01):
         return split_param_groups(self, base_lr, lora_lr, weight_decay)
 

@@ -27,6 +27,7 @@
 | [설계 문서](docs/DESIGN.md) | 아키텍처, 관측/API 계약, R1~R4, 동시성, 테스트 전략 |
 | [빌드/실행 안내](docs/BUILD.md) | 설치, 런처/두 터미널 실행, 학습 파이프라인, 문제 해결 |
 | [의사결정 기록](docs/DECISIONS.md) | 시간순 ADR — 왜 지금 이런 구조인가 (실패 포함) |
+| [프루닝 보고서](docs/PRUNE.md) | 워드 임베딩 제거 전후 용량·실제 플레이 비교 |
 | [계획/실험 로그](PLAN.md) | 마일스톤과 실측 원본 |
 
 ## 빠른 시작
@@ -149,6 +150,9 @@ python -m training.evaluate --checkpoint checkpoints/wall/best.pt --data data/wa
 
 # 4) AI vs 규칙 벤치마크 (같은 미로 집합)
 python -m training.compare_brains --mazes 60 --size 15
+
+# 5) 워드 임베딩 프루닝 (체크포인트 17.38 MiB → 2.48 MiB, 동작 동일)
+python -m training.prune_embeddings --checkpoint checkpoints/wall/best.pt --out checkpoints/wall_pruned
 ```
 
 ## 구조
@@ -159,6 +163,7 @@ docs/
 ├── DESIGN.md          # SW 설계 문서
 ├── BUILD.md           # 빌드/실행 안내
 ├── DECISIONS.md       # 의사결정 기록
+├── PRUNE.md           # 워드 임베딩 프루닝 보고서
 └── screenshot-rule.png
 server/
 ├── app/
@@ -169,14 +174,14 @@ server/
 │   │   └── schemas.py #   클라이언트와 공유하는 계약
 │   ├── game/          # 미로 생성, 환경/관측, 규칙 전문가, (평가 전용) BFS
 │   └── ml/            # LoRA, BERT 정책, 슬라이딩 윈도우 실행기
-├── training/          # 데이터 생성, 학습, 평가, DAgger, 구현체 비교
+├── training/          # 데이터 생성, 학습, 평가, DAgger, 구현체 비교, 프루닝
 ├── viewer/            # SDL 클라이언트 — 렌더링 + 입력 (경로 탐색 없음)
 │   ├── app.py         #   이벤트 루프
 │   ├── api_client.py  #   stdlib urllib HTTP
 │   ├── remote.py      #   서버 JSON → 화면 상태
 │   ├── render.py      #   그리기 전용
 │   └── layout.py      #   순수 레이아웃 계산 (pygame 비의존)
-└── tests/             # 152 tests
+└── tests/             # 159 tests
 ```
 
 ## 테스트
@@ -197,6 +202,9 @@ python -m pytest
 
 - 서버/클라이언트 분리 완료. 세 구현체(AI·규칙·사람)를 GUI에서 즉시 교체할 수 있습니다.
 - `checkpoints/wall` (왼손 법칙 라벨, LoRA r=32) 은 롤아웃 성공률 **100%** 입니다.
+- `checkpoints/wall_pruned` 는 추론에 쓰이지 않는 `word_embeddings` 를 제거한 사본입니다.
+  **17.38 MiB → 2.48 MiB (−85.8%)** 이고, 같은 60 미로에서 행동·성공률·스텝이 완전히 동일합니다
+  ([`docs/PRUNE.md`](./docs/PRUNE.md)).
 - 다만 그 성공률은 **규칙을 그대로 증류했기 때문**입니다. 아래 실측 참고.
 
 ### 규칙 vs AI (같은 미로, 15×15)

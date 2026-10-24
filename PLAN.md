@@ -5,7 +5,7 @@
 > 이전 초안: [`PLAN_v0_draft.md`](./PLAN_v0_draft.md) — 일반 웹 게임 계획. 본 문서가 이를 대체함.
 > 상태: **W3 완료** — FastAPI 서버 + SDL 클라이언트 분리, 구현체(AI/규칙/사람) 선택 GUI (§14 W3)
 >
-> 문서: [SW 설계](./docs/DESIGN.md) · [빌드/실행](./docs/BUILD.md) · [의사결정 기록](./docs/DECISIONS.md)
+> 문서: [SW 설계](./docs/DESIGN.md) · [빌드/실행](./docs/BUILD.md) · [의사결정 기록](./docs/DECISIONS.md) · [프루닝](./docs/PRUNE.md)
 
 ---
 
@@ -790,6 +790,28 @@ python -m viewer.app --brain rule       # 규칙(왼손 법칙)
 python -m viewer.app --brain rule --rule frontier
 python -m viewer.app --brain human      # 사람
 ```
+
+---
+
+### W3.1 워드 임베딩 프루닝 (2026-10-24)
+
+**질문** — `inputs_embeds` 경로만 쓰는데 30,522행 어휘표를 체크포인트에 남길 이유가 있는가?
+
+**아니오.** `word_embeddings` 를 1행 0 임베딩으로 교체하면 로짓이 비트 단위로 동일하고,
+체크포인트만 줄어든다. `PolicyConfig.prune_word_embeddings` 로 opt-in 하며, 저장된 config
+덕분에 `BertPolicy.load` 가 가중치 로드 전에 같은 모양을 만든다.
+
+| 항목 | Before | After | 절감 |
+| --- | ---: | ---: | ---: |
+| 전체 파라미터 | 4,549,380 | 642,692 | 3,906,688 (85.9%) |
+| `state_dict` 텐서 | 17.35 MiB | 2.45 MiB | 14.90 MiB (85.9%) |
+| 체크포인트 파일 | 17.38 MiB | 2.48 MiB | 14.90 MiB (85.8%) |
+
+**실제 플레이 검증** — `training/compare_brains` 60 미로(15×15, seed 90000~90059)와
+`training/evaluate` 24 미로(`data/wall` test)에서 원본/프루닝본이 **모두 100% 성공,
+평균 스텝·optimality·루프율 완전 일치**(짝지음: 동일 60 · Δ 0.0). GUI 플레이를 자동
+수집하는 벤치마크는 없으며, 두 스크립트가 서버와 동일한 `MazeEnv` + `PolicyRunner`
+경로로 실제 에피소드를 수행한다. 상세: [`docs/PRUNE.md`](./docs/PRUNE.md).
 
 ---
 
