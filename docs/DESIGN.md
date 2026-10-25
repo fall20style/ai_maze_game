@@ -2,7 +2,7 @@
 
 > 버전 1.0 · 작성 2026-10-24 · 기준 커밋 `149afb0`
 >
-> 관련 문서: [빌드/실행 안내](./BUILD.md) · [의사결정 기록](./DECISIONS.md) · [계획/실험 로그](../PLAN.md) · [README](../README.md)
+> 관련 문서: [빌드/실행 안내](./BUILD.md) · [사용 가이드](./USAGE.md) · [의사결정 기록](./DECISIONS.md) · [계획/실험 로그](../PLAN.md) · [README](../README.md)
 
 ---
 
@@ -132,6 +132,8 @@ import 하지 않으므로, 서버 내부를 리팩터링해도 클라이언트�
 |---|---|
 | `lora.py` | BERT 선형층에 LoRA A/B 주입, 학습 가능 파라미터 표시, 파라미터 그룹 분리 |
 | `policy.py` | `PolicyConfig`, `BertPolicy`(Linear → BERT → action head), 저장/로드 |
+| `registry.py` | 체크포인트 로드/캐시 — 게임 Brain 과 추론 API 가 공유 |
+| `inference.py` | 게임 비의존 추론 코어 — 패딩/절단, 행동·확률 계산 |
 | `runner.py` | `PolicyRunner` — 슬라이딩 윈도우로 학습과 동일한 `(1, T, D)` 입력 생성 |
 
 `BertPolicy` 구조:
@@ -348,8 +350,10 @@ class ServerBrain(Protocol):
 
 | 메서드 | 경로 | 역할 | 오류 |
 |---|---|---|---|
-| GET | `/health` | 상태 + 선택된 체크포인트 + 게임 수 | — |
+| GET | `/health` | 상태 + 선택된 체크포인트 + `model_loaded` + 게임 수 | — |
 | GET | `/brains` | 선택 가능한 구현체 목록 | — |
+| GET | `/models` | 추론 모델의 관측 차원·시퀀스 길이 | `404`, `400` |
+| POST | `/predict` | 관측 시계열 → 행동·확률 (게임 세션 불필요) | `404`, `400`, `422` |
 | POST | `/games` | 판 생성 | `422` 짝수 크기, `503` 체크포인트 없음 |
 | GET | `/games/{id}` | 현재 상태 (읽기 전용) | `404` |
 | POST | `/games/{id}/advance` | Brain 이 스스로 이동 | `404`, `409` (human 모드) |
@@ -453,6 +457,29 @@ Client                          Server
 
 클라이언트는 사람 모드에서 `/advance` 를 polling 하지 않는다
 (`test_human_mode_does_not_poll_the_server_for_steps`).
+
+### 8.5 독립 추론 API
+
+게임 세션과 무관하게 모델만 호출하는 경로다. 상태를 저장하지 않으므로 호출자가
+관측 시계열을 매번 보낸다.
+
+```
+POST /predict
+{ "observations": [[...obs_dim], ...], "checkpoint": null, "return_logits": false }
+
+200
+{ "action": 0, "action_name": "UP", "probabilities": [0.89, ...],
+  "logits": null, "obs_dim": 54, "seq_len": 32,
+  "history_length": 1, "truncated": false, "latency_ms": 14.2 }
+```
+
+- 입력 규약은 학습·`PolicyRunner` 와 동일하다: 마지막 관측이 현재 스텝,
+  짧으면 왼쪽 0 패딩 + mask 0, 길면 최근 `seq_len` 개만 사용.
+- `GET /models` 가 `obs_dim`/`seq_len`/`window_size`/`global_size`/`map_size` 를 알려준다.
+- 모델은 `app/ml/registry.py` 캐시를 게임 Brain 과 공유한다. startup 에서 기본
+  체크포인트를 워밍업한다.
+- 명시적 `checkpoint` 경로는 `server/checkpoints/` 하위로 제한한다.
+- 상세 계약: [INFERENCE.md](./INFERENCE.md).
 
 ---
 

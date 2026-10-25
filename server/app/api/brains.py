@@ -23,12 +23,10 @@ import numpy as np
 from app.game.actions import Action
 from app.game.env import MazeEnv
 from app.game.expert import frontier_action, wall_follow_action
+from app.ml.registry import load_policy
 
 #: AI 체크포인트 자동 선택 순서
 CHECKPOINT_CANDIDATES = ("wall", "v3")
-
-#: 프로세스 전역 모델 캐시 (게임마다 새로 로드하지 않는다)
-_POLICY_CACHE: dict[str, object] = {}
 
 
 def discover_checkpoint(server_root: Path) -> str | None:
@@ -134,13 +132,9 @@ class PolicyServerBrain:
     requires_client_action = False
 
     def __init__(self, checkpoint: str, seq_len: int | None = None) -> None:
-        from app.ml.policy import BertPolicy
         from app.ml.runner import PolicyRunner
 
-        model = _POLICY_CACHE.get(checkpoint)
-        if model is None:
-            model = BertPolicy.load(checkpoint)
-            _POLICY_CACHE[checkpoint] = model
+        model = load_policy(checkpoint)
         self.model = model
         self.runner = PolicyRunner(model, seq_len=seq_len)
         self.window_size = int(getattr(model.cfg, "window_size", 3))

@@ -2,7 +2,7 @@
 
 > 버전 1.0 · 작성 2026-10-24 · 기준 커밋 `149afb0`
 >
-> 관련 문서: [설계 문서](./DESIGN.md) · [의사결정 기록](./DECISIONS.md) · [README](../README.md)
+> 관련 문서: [설계 문서](./DESIGN.md) · [사용 가이드](./USAGE.md) · [의사결정 기록](./DECISIONS.md) · [README](../README.md)
 
 이 문서는 **처음 받은 저장소를 실행 가능한 상태로 만드는 방법**과, 학습·평가·문제 해결 절차를
 정리한다. 검증 환경은 Windows 11 + Python 3.11(CPU) 이지만, Linux/macOS 에서도 같은 명령이
@@ -140,6 +140,7 @@ python -m uvicorn app.api.main:app --port 8000
 
 - API 문서: <http://127.0.0.1:8000/docs>
 - 상태 확인: <http://127.0.0.1:8000/health>
+- 모델 계약: <http://127.0.0.1:8000/models> · 독립 추론 예시: [`INFERENCE.md`](./INFERENCE.md)
 - `--reload` 는 개발 중에만 사용한다(세션이 사라짐).
 
 **터미널 2 — 클라이언트**
@@ -406,5 +407,5 @@ maze_game/
     │   └── ml/              # LoRA/BERT 정책/실행기
     ├── training/            # 데이터/학습/평가/DAgger/비교
     ├── viewer/              # SDL 클라이언트 (경로 탐색 없음)
-    └── tests/               # 152 tests
+    └── tests/               # 171 tests
 ```

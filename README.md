@@ -26,8 +26,10 @@
 |---|---|
 | [설계 문서](docs/DESIGN.md) | 아키텍처, 관측/API 계약, R1~R4, 동시성, 테스트 전략 |
 | [빌드/실행 안내](docs/BUILD.md) | 설치, 런처/두 터미널 실행, 학습 파이프라인, 문제 해결 |
+| [사용 가이드](docs/USAGE.md) | GUI가 클라이언트로서 어떤 API를 호출하는지, 직접 호출 예시 |
 | [의사결정 기록](docs/DECISIONS.md) | 시간순 ADR — 왜 지금 이런 구조인가 (실패 포함) |
 | [프루닝 보고서](docs/PRUNE.md) | 워드 임베딩 제거 전후 용량·실제 플레이 비교 |
+| [독립 추론 API](docs/INFERENCE.md) | 게임 세션 없이 관측 시계열로 행동을 추론하는 HTTP API |
 | [계획/실험 로그](PLAN.md) | 마일스톤과 실측 원본 |
 
 ## 빠른 시작
@@ -123,8 +125,10 @@ python -m viewer.app --brain rule --snapshot shot.png --snapshot-frame 120
 
 | 메서드 | 경로 | 역할 |
 |---|---|---|
-| GET | `/health` | 상태 + 선택된 체크포인트 |
+| GET | `/health` | 상태 + 선택된 체크포인트 + `model_loaded` |
 | GET | `/brains` | 구현체 목록 |
+| GET | `/models` | 추론 모델의 관측 차원·시퀀스 길이 |
+| POST | `/predict` | 관측 시계열 → 행동·확률 (게임 세션 불필요) |
 | POST | `/games` | 판 생성 |
 | GET | `/games/{id}` | 현재 상태 |
 | POST | `/games/{id}/advance` | Brain 이 스스로 이동 |
@@ -133,6 +137,20 @@ python -m viewer.app --brain rule --snapshot shot.png --snapshot-frame 120
 | POST | `/games/{id}/reset` | 같은 미로 재시작 |
 | POST | `/games/{id}/new-maze` | 새 미로 |
 | DELETE | `/games/{id}` | 세션 종료 |
+
+### 독립 추론 (게임 세션 없이)
+
+```powershell
+# 모델이 기대하는 관측 차원 확인
+Invoke-RestMethod http://127.0.0.1:8000/models
+
+# 관측 1개로 행동 추론 (54차원 예시)
+$body = '{"observations": [[' + (('0,' * 53) + '0') + ']]}'
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/predict `
+  -ContentType 'application/json' -Body $body
+```
+
+계약·오류·시퀀스 규칙은 [`docs/INFERENCE.md`](docs/INFERENCE.md) 참고.
 
 ## 학습 파이프라인
 
@@ -162,8 +180,10 @@ test_launcher.py       # 서버 + 클라이언트 동시 실행
 docs/
 ├── DESIGN.md          # SW 설계 문서
 ├── BUILD.md           # 빌드/실행 안내
+├── USAGE.md           # GUI/API 사용 가이드
 ├── DECISIONS.md       # 의사결정 기록
 ├── PRUNE.md           # 워드 임베딩 프루닝 보고서
+├── INFERENCE.md       # 독립 추론 API 계약
 └── screenshot-rule.png
 server/
 ├── app/
@@ -181,7 +201,7 @@ server/
 │   ├── remote.py      #   서버 JSON → 화면 상태
 │   ├── render.py      #   그리기 전용
 │   └── layout.py      #   순수 레이아웃 계산 (pygame 비의존)
-└── tests/             # 159 tests
+└── tests/             # 171 tests
 ```
 
 ## 테스트
