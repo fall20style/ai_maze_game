@@ -40,6 +40,47 @@ class NewMazeRequest(BaseModel):
     seed: int | None = None
 
 
+class PredictRequest(BaseModel):
+    """독립 추론 요청.
+
+    ``observations`` 는 ``MazeEnv.observe()`` 가 만드는 1차원 관측 벡터의 시계열이다.
+    마지막 원소가 현재 스텝이며, 길이가 ``seq_len`` 보다 짧으면 왼쪽을 0으로 패딩하고
+    길면 최근 ``seq_len`` 개만 사용한다.
+    """
+
+    observations: list[list[float]] = Field(..., min_length=1, max_length=4096)
+    #: 체크포인트 디렉터리 이름(``wall``) 또는 ``server/checkpoints`` 하위 경로.
+    #: 생략하면 게임 서버와 같은 자동 탐색 순서를 쓴다.
+    checkpoint: str | None = None
+    return_logits: bool = False
+
+
+class PredictResponse(BaseModel):
+    checkpoint: str
+    action: int
+    action_name: str
+    probabilities: list[float]
+    logits: list[float] | None = None
+    obs_dim: int
+    seq_len: int
+    #: 실제로 사용한 관측 개수 (``seq_len`` 이하)
+    history_length: int
+    #: 입력이 ``seq_len`` 보다 길어 앞부분을 버렸는가
+    truncated: bool
+    latency_ms: float
+
+
+class ModelInfo(BaseModel):
+    checkpoint: str
+    obs_dim: int
+    seq_len: int
+    num_actions: int
+    window_size: int
+    global_size: int
+    map_size: int
+    loaded: bool
+
+
 class MazeState(BaseModel):
     width: int
     height: int
@@ -88,4 +129,5 @@ class BrainInfo(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     checkpoint: str | None = None
+    model_loaded: bool = False
     games: int = 0
