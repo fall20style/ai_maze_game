@@ -140,6 +140,7 @@ python -m uvicorn app.api.main:app --port 8000
 
 - API 문서: <http://127.0.0.1:8000/docs>
 - 상태 확인: <http://127.0.0.1:8000/health>
+- 모델 계약: <http://127.0.0.1:8000/models> · 독립 추론 예시: [`INFERENCE.md`](./INFERENCE.md)
 - `--reload` 는 개발 중에만 사용한다(세션이 사라짐).
 
 **터미널 2 — 클라이언트**
@@ -406,5 +407,5 @@ maze_game/
     │   └── ml/              # LoRA/BERT 정책/실행기
     ├── training/            # 데이터/학습/평가/DAgger/비교
     ├── viewer/              # SDL 클라이언트 (경로 탐색 없음)
-    └── tests/               # 152 tests
+    └── tests/               # 171 tests
 ```

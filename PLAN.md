@@ -5,7 +5,7 @@
 > 이전 초안: [`PLAN_v0_draft.md`](./PLAN_v0_draft.md) — 일반 웹 게임 계획. 본 문서가 이를 대체함.
 > 상태: **W3 완료** — FastAPI 서버 + SDL 클라이언트 분리, 구현체(AI/규칙/사람) 선택 GUI (§14 W3)
 >
-> 문서: [SW 설계](./docs/DESIGN.md) · [빌드/실행](./docs/BUILD.md) · [의사결정 기록](./docs/DECISIONS.md) · [프루닝](./docs/PRUNE.md)
+> 문서: [SW 설계](./docs/DESIGN.md) · [빌드/실행](./docs/BUILD.md) · [의사결정 기록](./docs/DECISIONS.md) · [프루닝](./docs/PRUNE.md) · [독립 추론](./docs/INFERENCE.md)
 
 ---
 
@@ -812,6 +812,27 @@ python -m viewer.app --brain human      # 사람
 평균 스텝·optimality·루프율 완전 일치**(짝지음: 동일 60 · Δ 0.0). GUI 플레이를 자동
 수집하는 벤치마크는 없으며, 두 스크립트가 서버와 동일한 `MazeEnv` + `PolicyRunner`
 경로로 실제 에피소드를 수행한다. 상세: [`docs/PRUNE.md`](./docs/PRUNE.md).
+
+---
+
+### W3.2 독립 추론 API (2026-10-25)
+
+**질문** — 학습된 가중치를 게임 세션 없이 FastAPI 로 호출할 수 있는가?
+
+**예.** `POST /predict` 가 관측 시계열을 받아 행동·확률·(선택) logits 를 돌려준다.
+`GET /models` 는 `obs_dim`/`seq_len`/관측 설정을 알려주고, startup 에서 기본
+체크포인트를 로드·워밍업한다. 모델 캐시는 게임 Brain 과 공유하므로 같은 관측에는
+같은 행동이 나온다.
+
+| 항목 | 내용 |
+| --- | --- |
+| 엔드포인트 | `GET /models`, `POST /predict`, `GET /health.model_loaded` |
+| 입력 규약 | 마지막 관측 = 현재 스텝, 왼쪽 0 패딩, 최근 `seq_len` 절단 |
+| 모델 선택 | `checkpoint` 이름/경로 (`server/checkpoints` 하위만) |
+| 상태 | 무상태 — 관측 이력은 호출자가 전달 |
+| 테스트 | `tests/test_inference.py` 12건 |
+
+상세: [`docs/INFERENCE.md`](./docs/INFERENCE.md).
 
 ---
 
