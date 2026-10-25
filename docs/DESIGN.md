@@ -2,7 +2,7 @@
 
 > 버전 1.0 · 작성 2026-10-24 · 기준 커밋 `149afb0`
 >
-> 관련 문서: [빌드/실행 안내](./BUILD.md) · [의사결정 기록](./DECISIONS.md) · [계획/실험 로그](../PLAN.md) · [README](../README.md)
+> 관련 문서: [빌드/실행 안내](./BUILD.md) · [사용 가이드](./USAGE.md) · [의사결정 기록](./DECISIONS.md) · [계획/실험 로그](../PLAN.md) · [README](../README.md)
 
 ---
 

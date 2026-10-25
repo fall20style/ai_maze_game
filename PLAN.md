@@ -5,7 +5,7 @@
 > 이전 초안: [`PLAN_v0_draft.md`](./PLAN_v0_draft.md) — 일반 웹 게임 계획. 본 문서가 이를 대체함.
 > 상태: **W3 완료** — FastAPI 서버 + SDL 클라이언트 분리, 구현체(AI/규칙/사람) 선택 GUI (§14 W3)
 >
-> 문서: [SW 설계](./docs/DESIGN.md) · [빌드/실행](./docs/BUILD.md) · [의사결정 기록](./docs/DECISIONS.md) · [프루닝](./docs/PRUNE.md) · [독립 추론](./docs/INFERENCE.md)
+> 문서: [SW 설계](./docs/DESIGN.md) · [빌드/실행](./docs/BUILD.md) · [사용 가이드](./docs/USAGE.md) · [의사결정 기록](./docs/DECISIONS.md) · [프루닝](./docs/PRUNE.md) · [독립 추론](./docs/INFERENCE.md)
 
 ---
 

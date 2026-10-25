@@ -26,6 +26,7 @@
 |---|---|
 | [설계 문서](docs/DESIGN.md) | 아키텍처, 관측/API 계약, R1~R4, 동시성, 테스트 전략 |
 | [빌드/실행 안내](docs/BUILD.md) | 설치, 런처/두 터미널 실행, 학습 파이프라인, 문제 해결 |
+| [사용 가이드](docs/USAGE.md) | GUI가 클라이언트로서 어떤 API를 호출하는지, 직접 호출 예시 |
 | [의사결정 기록](docs/DECISIONS.md) | 시간순 ADR — 왜 지금 이런 구조인가 (실패 포함) |
 | [프루닝 보고서](docs/PRUNE.md) | 워드 임베딩 제거 전후 용량·실제 플레이 비교 |
 | [독립 추론 API](docs/INFERENCE.md) | 게임 세션 없이 관측 시계열로 행동을 추론하는 HTTP API |
@@ -179,6 +180,7 @@ test_launcher.py       # 서버 + 클라이언트 동시 실행
 docs/
 ├── DESIGN.md          # SW 설계 문서
 ├── BUILD.md           # 빌드/실행 안내
+├── USAGE.md           # GUI/API 사용 가이드
 ├── DECISIONS.md       # 의사결정 기록
 ├── PRUNE.md           # 워드 임베딩 프루닝 보고서
 ├── INFERENCE.md       # 독립 추론 API 계약

@@ -5,6 +5,7 @@
 
 - 구현: [`server/app/api/main.py`](../server/app/api/main.py), [`server/app/api/predictor.py`](../server/app/api/predictor.py), [`server/app/ml/inference.py`](../server/app/ml/inference.py)
 - 테스트: [`server/tests/test_inference.py`](../server/tests/test_inference.py)
+- 실행/GUI 연동: [USAGE.md](./USAGE.md)
 
 ## 1. 실행
 
